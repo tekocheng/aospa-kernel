@@ -133,14 +133,17 @@ build_modules() {
     m modules
     rm -rf out/modules out/*.ko
     m INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
+    modules_out="out/modules/lib/modules/$(ls -t out/modules/lib/modules/ | head -n1)"
 
-    ksu_path="$(find $modules_out -name 'kernelsu.ko' -print -quit)"
-    if [ -n "$ksu_path" ]; then
-        mv "$ksu_path" out
-        echo_i "Copied to out/kernelsu.ko"
-    else
-        echo_e "Unable to locate KernelSU module!"
-    fi
+    for name in kernelsu nomount; do
+        ko_path="$(find $modules_out -name "$name.ko" -print -quit)"
+        if [ -n "$ko_path" ]; then
+            mv "$ko_path" out
+            echo_i "Copied to out/$name.ko"
+        else
+            echo_e "Unable to locate $name module!"
+        fi
+    done
 
     echo_i "Building techpack modules..."
     for module in $MODULES; do
@@ -250,7 +253,8 @@ m ./scripts/kconfig/merge_config.sh $DEFCONFIGS vendor/${TARGET}_GKI.config
 scripts/config --file out/.config \
     --set-str LOCALVERSION "-${KERNEL_NAME}$(get_trees_rev)" \
     -d LOCALVERSION_AUTO \
-    -m CONFIG_KSU
+    -m CONFIG_KSU \
+    -m CONFIG_NOMOUNT
 $NO_LTO && {
     scripts/config --file out/.config \
         --set-str LOCALVERSION "-${KERNEL_NAME}-nolto$(get_trees_rev)" \
