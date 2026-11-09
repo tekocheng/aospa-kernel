@@ -1,0 +1,86 @@
+name: Kernel Image
+on:
+  workflow_dispatch:
+env:
+  CLANG_DIR: clang-r596125
+jobs:
+  build-kernel-image:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@main
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: false
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.2.0"
+          testing: false
+      - name: Set swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+      - name: Increase file limit
+        run: |
+          sudo sysctl -w vm.swappiness=100
+      - name: Check repository
+        uses: actions/checkout@v7.0.1
+      - name: Setup Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.15.2'
+      - name: Setup build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc device-tree-compiler
+          sudo curl --create-dirs -o /usr/local/bin/repo -L https://storage.googleapis.com/git-repo-downloads/repo
+          sudo chmod a+rx /usr/local/bin/repo
+      - name: Clone repo and sync
+        run: |
+          repo init -u https://github.com/alex18101985/aospa-calcite-kernel -b main -m manifest.xml --depth=1
+          repo sync
+          cp -rvf android_kernel_xiaomi_sm8450/. kernel_platform/xiaomi/sm8450/
+          sed -i 's/\r$//' kernel_platform/xiaomi/sm8450/scripts/setlocalversion
+          mkdir -p device/xiaomi/marble-kernel/dtbs
+          echo "SRC_ROOT=$(pwd)" > kernel_platform/xiaomi/sm8450/.build.rc
+      - name: Cache Clang
+        uses: actions/cache@v6.1.0
+        with:
+          path: kernel_platform/clang
+          key: clang-r596125
+      - name: Setup Clang
+        run: |
+          mkdir -p kernel_platform/clang
+          cd kernel_platform/clang
+          if [ ! -d "${CLANG_DIR}" ]; then
+            echo "Clang not found in cache. Downloading..."
+            git clone -n --depth=1 --filter=tree:0 -b main-kernel --single-branch \
+              https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 .
+            git sparse-checkout init --cone
+            git sparse-checkout set ${CLANG_DIR}
+            git checkout
+          else
+            echo "Using cached ${CLANG_DIR}"
+          fi
+      - name: Include KernelSU
+        run: |
+          cd kernel_platform/xiaomi/sm8450
+          rm -rf KernelSU
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+      - name: Build kernel image
+        run: |
+          cd kernel_platform/xiaomi/sm8450
+          export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
+          ./build.sh marble --only-kernel
+      - name: Upload kernel image artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kernel-image
+          path: device/xiaomi/marble-kernel/Image
+          compression-level: 9
+          
