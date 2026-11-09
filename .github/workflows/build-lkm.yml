@@ -72,6 +72,11 @@ jobs:
           cd kernel_platform/xiaomi/sm8450
           rm -rf KernelSU
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+      - name: Include NoMount
+        run: |
+          cd kernel_platform/xiaomi/sm8450
+          NM=bf1847f98fed382369c43bfd652cd93774b9b8e3
+          curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/$NM/kernel/setup.sh" | bash -s $NM
       - name: Build LKM module
         run: |
           cd kernel_platform/xiaomi/sm8450
@@ -81,6 +86,8 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: ksu-lkm-module
-          path: kernel_platform/xiaomi/sm8450/out/kernelsu.ko
+          path: |
+            kernel_platform/xiaomi/sm8450/out/kernelsu.ko
+            kernel_platform/xiaomi/sm8450/out/nomount.ko
           compression-level: 9
           
