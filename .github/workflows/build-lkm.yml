@@ -71,7 +71,7 @@ jobs:
         run: |
           cd kernel_platform/xiaomi/sm8450
           rm -rf KernelSU
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
       - name: Build LKM module
         run: |
           cd kernel_platform/xiaomi/sm8450
