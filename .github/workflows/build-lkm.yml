@@ -80,7 +80,7 @@ jobs:
       - name: Upload LKM module artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ksunext-lkm-module
+          name: ksu-lkm-module
           path: kernel_platform/xiaomi/sm8450/out/kernelsu.ko
           compression-level: 9
           
