@@ -4,7 +4,7 @@ on:
 env:
   CLANG_DIR: clang-r596125
 jobs:
-  build-ksunext-lkm-module:
+  build-ksu-lkm-module:
     runs-on: ubuntu-22.04
     steps:
       - name: Free disk space
