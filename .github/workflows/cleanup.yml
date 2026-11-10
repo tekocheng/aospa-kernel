@@ -1,0 +1,47 @@
+name: Cleanup Workflow Runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: Number of latest finished runs to keep
+        type: number
+        default: 3
+      mode:
+        description: Which runs to delete
+        type: choice
+        options:
+          - all-finished
+          - failed-only
+        default: all-finished
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Delete old runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          gh api --paginate "repos/${REPO}/actions/runs?per_page=100&status=completed" \
+            --jq '.workflow_runs[] | "\(.id) \(.conclusion)"' \
+            | tail -n +"$((KEEP + 1))" \
+            | while read -r id conclusion; do
+                if [ "$MODE" = "failed-only" ] && [ "$conclusion" = "success" ]; then
+                  continue
+                fi
+                if gh api -X DELETE "repos/${REPO}/actions/runs/${id}" --silent; then
+                  echo "Deleted run ${id} (${conclusion})"
+                else
+                  echo "Failed to delete run ${id}"
+                fi
+              done
