@@ -1,0 +1,377 @@
+name: Build AOSPA ShadeDark Kernel (marble)
+
+on:
+  workflow_dispatch:
+    inputs:
+      clang_source:
+        description: "Clang toolchain"
+        type: choice
+        options:
+          - manifest
+          - custom
+        default: manifest
+        required: true
+      custom_clang_url:
+        description: "URL to a custom Linux x86_64 Clang .tar.gz (only when clang_source=custom)"
+        type: string
+        required: false
+      kernelsu:
+        description: "Inject official KernelSU (tiann)"
+        type: boolean
+        default: false
+        required: true
+      susfs:
+        description: "Apply SUSFS for GKI 5.10 (requires KernelSU)"
+        type: boolean
+        default: false
+        required: true
+      susfs_branch:
+        description: "SUSFS branch"
+        type: string
+        default: "gki-android12-5.10"
+        required: true
+      lto:
+        description: "Kernel LTO mode"
+        type: choice
+        options:
+          - thin
+          - full
+        default: thin
+        required: true
+      clean_build:
+        description: "Delete kernel output before compiling"
+        type: boolean
+        default: false
+        required: true
+      ccache_size:
+        description: "Maximum ccache size"
+        type: choice
+        options:
+          - 6G
+          - 8G
+          - 10G
+        default: 8G
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marble-kernel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Full manifest sync is large. The disk-space step is important on hosted runners.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    env:
+      MANIFEST_URL: https://github.com/aospa-shadedark/kernel_manifest
+      MANIFEST_BRANCH: calcite-xiaomi-sm8450
+      KERNEL_BRANCH: calcite
+      KERNEL_DIR: kernel_platform/xiaomi/sm8450
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: ${{ inputs.ccache_size }}
+      USE_CCACHE: "1"
+
+    steps:
+      - name: Maximize runner disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev \
+            lib32z1-dev libelf-dev liblz4-tool libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lz4 make openjdk-17-jdk \
+            pahole python3 python-is-python3 rsync schedtool squashfs-tools \
+            unzip wget xz-utils zip zlib1g-dev
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Install Google repo tool
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/.local/bin/repo"
+          chmod +x "$HOME/.local/bin/repo"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-${{ github.sha }}
+          restore-keys: |
+            ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-
+            ccache-marble-${{ runner.os }}-
+
+      - name: Configure ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache --set-config=max_size="$CCACHE_MAXSIZE"
+          ccache --set-config=compiler_check=content
+          ccache --set-config=depend_mode=true
+          ccache --zero-stats
+          ccache -s
+          {
+            echo "CCACHE_DIR=$CCACHE_DIR"
+            echo "CCACHE_EXEC=$(command -v ccache)"
+            echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
+            echo "CCACHE_BASEDIR=/"
+            echo "USE_CCACHE=1"
+            echo "CCACHE_COMPILERCHECK=content"
+            echo "CCACHE=ccache"
+          } >> "$GITHUB_ENV"
+
+      - name: Initialize manifest
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH"
+
+      - name: Sync full source tree
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          # This is intentionally a full sync: source history and all manifest projects
+          # are retained, matching the repository's documented setup.
+          repo sync --no-tags --no-clone-bundle --current-branch -j8
+
+      - name: Verify manifest projects and source branch
+        run: |
+          test -d "$KERNEL_DIR"
+          test -d kernel_platform/build
+          test -x kernel_platform/build/build.sh
+          echo "Kernel source:"
+          git -C "$KERNEL_DIR" branch --show-current || true
+          git -C "$KERNEL_DIR" rev-parse HEAD
+          echo "Manifest projects:"
+          repo list
+
+      - name: Select manifest Clang
+        if: inputs.clang_source == 'manifest'
+        run: |
+          CLANG_ROOT="$GITHUB_WORKSPACE/kernel_platform/prebuilts-master/clang/host/linux-x86"
+          test -d "$CLANG_ROOT"
+          CLANG_BIN="$(find "$CLANG_ROOT" -type f -path '*/bin/clang' -print -quit)"
+          test -n "$CLANG_BIN"
+          CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
+          echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
+          echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
+          "$CLANG_BIN" --version
+
+      - name: Download custom Clang
+        if: inputs.clang_source == 'custom'
+        run: |
+          test -n "${{ inputs.custom_clang_url }}" || {
+            echo "::error::custom_clang_url is required when clang_source=custom"
+            exit 1
+          }
+          mkdir -p "$RUNNER_TEMP/custom-clang"
+          curl -fL --retry 3 "${{ inputs.custom_clang_url }}" -o "$RUNNER_TEMP/clang.tar.gz"
+          tar -xf "$RUNNER_TEMP/clang.tar.gz" -C "$RUNNER_TEMP/custom-clang"
+          CLANG_BIN="$(find "$RUNNER_TEMP/custom-clang" -type f -path '*/bin/clang' -print -quit)"
+          test -n "$CLANG_BIN" || {
+            echo "::error::The archive does not contain */bin/clang"
+            exit 1
+          }
+          CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
+          echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
+          echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
+          "$CLANG_BIN" --version
+
+      - name: Inject official KernelSU
+        if: inputs.kernelsu
+        working-directory: kernel_platform/xiaomi/sm8450
+        run: |
+          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash
+          test -d KernelSU || test -d KernelSU-Next
+          echo "KernelSU source injected."
+
+      - name: Apply SUSFS kernel and KernelSU patches
+        if: inputs.susfs
+        env:
+          SUSFS_BRANCH: ${{ inputs.susfs_branch }}
+          KSU_ENABLED: ${{ inputs.kernelsu }}
+        run: |
+          set -euo pipefail
+          if [ "$KSU_ENABLED" != "true" ]; then
+            echo "::error::SUSFS requires kernelsu=true."
+            exit 1
+          fi
+
+          git clone --depth=1 --branch "$SUSFS_BRANCH" \
+            https://gitlab.com/simonpunk/susfs4ksu.git "$RUNNER_TEMP/susfs4ksu"
+
+          cd "$KERNEL_DIR"
+          test -d fs
+          test -d include/linux
+
+          # Select the patch matching this kernel generation.
+          SUSFS_KERNEL_PATCH="$(find "$RUNNER_TEMP/susfs4ksu/kernel_patches" \
+            -maxdepth 1 -type f -name '*5.10*.patch' -print -quit)"
+          test -n "$SUSFS_KERNEL_PATCH" || {
+            echo "::error::No SUSFS 5.10 kernel patch found in the selected branch."
+            exit 1
+          }
+
+          cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/fs/"* fs/
+          cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/include/linux/"* include/linux/
+          patch --forward -p1 < "$SUSFS_KERNEL_PATCH"
+
+          KSU_DIR=""
+          for d in KernelSU KernelSU-Next; do
+            if [ -d "$d" ]; then KSU_DIR="$d"; break; fi
+          done
+          test -n "$KSU_DIR" || {
+            echo "::error::KernelSU directory not found after setup."
+            exit 1
+          }
+
+          KSU_SUSFS_PATCH="$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          test -f "$KSU_SUSFS_PATCH"
+          cp "$KSU_SUSFS_PATCH" "$KSU_DIR/"
+          if [ -f "$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/kernel/sucompat.h" ]; then
+            cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/kernel/sucompat.h" \
+              "$KSU_DIR/kernel/sucompat.h"
+          fi
+          (
+            cd "$KSU_DIR"
+            patch --forward -p1 < 10_enable_susfs_for_ksu.patch
+          )
+
+          # Enable only symbols that exist in this source's Kconfig.
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          test -f "$DEFCONFIG"
+          for symbol in KSU KSU_SUSFS KSU_SUSFS_HAS_MAGIC_MOUNT \
+                        KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT \
+                        KSU_SUSFS_AUTO_ADD_SUS_KSU \
+                        KSU_SUSFS_AUTO_ADD_SUS_KSU \
+                        KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
+            if grep -RqsE "config ${symbol}([[:space:]]|$)" \
+              --include='Kconfig*' .; then
+              scripts/config --file "$DEFCONFIG" --enable "$symbol"
+            fi
+          done
+
+      - name: Locate build configuration
+        id: buildcfg
+        run: |
+          CONFIG="$(find "$KERNEL_DIR" -maxdepth 3 -type f \
+            -name 'build.config.msm.waipio' -print -quit)"
+          if [ -z "$CONFIG" ]; then
+            CONFIG="$(find kernel_platform -type f \
+              -name 'build.config.msm.waipio' -print -quit)"
+          fi
+          test -n "$CONFIG" || {
+            echo "::error::build.config.msm.waipio not found in synced manifest."
+            exit 1
+          }
+          echo "path=$CONFIG" >> "$GITHUB_OUTPUT"
+          echo "Using $CONFIG"
+
+      - name: Clean previous kernel output
+        if: inputs.clean_build
+        run: |
+          rm -rf kernel_platform/out
+          rm -rf "$KERNEL_DIR/out"
+
+      - name: Build kernel
+        env:
+          BUILD_CONFIG: ${{ steps.buildcfg.outputs.path }}
+          VARIANT: gki
+          LTO: ${{ inputs.lto }}
+          CCACHE: ccache
+          CCACHE_EXEC: /usr/bin/ccache
+        run: |
+          set -o pipefail
+          export PATH="$CLANG_PREBUILT_BIN:$PATH"
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
+          export CCACHE_MAXSIZE="$CCACHE_MAXSIZE"
+          export CCACHE_BASEDIR=/
+          export USE_CCACHE=1
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE=ccache
+          export CCACHE_EXEC="$(command -v ccache)"
+
+          echo "BUILD_CONFIG=$BUILD_CONFIG"
+          echo "VARIANT=$VARIANT LTO=$LTO"
+          ccache -s
+          bash kernel_platform/build/build.sh 2>&1 | tee kernel-build.log
+          ccache -s
+
+      - name: Find and stage Image
+        id: image
+        run: |
+          IMAGE="$(find kernel_platform -type f -path '*/dist/Image' -print -quit)"
+          if [ -z "$IMAGE" ]; then
+            IMAGE="$(find kernel_platform -type f -name Image \
+              -not -path '*/prebuilts/*' -print -quit)"
+          fi
+          test -n "$IMAGE" || {
+            echo "::error::Kernel Image was not produced."
+            exit 1
+          }
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp "$IMAGE" "$GITHUB_WORKSPACE/artifacts/Image"
+          echo "path=$IMAGE" >> "$GITHUB_OUTPUT"
+          ls -lh "$GITHUB_WORKSPACE/artifacts/Image"
+
+      - name: Package Image-only AnyKernel3 ZIP
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$RUNNER_TEMP/AnyKernel3"
+          rm -rf "$RUNNER_TEMP/AnyKernel3/.git"
+          cp artifacts/Image "$RUNNER_TEMP/AnyKernel3/Image"
+
+          AK="$RUNNER_TEMP/AnyKernel3/anykernel.sh"
+          if grep -q '^device.name1=' "$AK"; then
+            sed -i 's/^device.name1=.*/device.name1=marble/' "$AK"
+          else
+            echo 'device.name1=marble' >> "$AK"
+          fi
+
+          if grep -q '^is_slot_device=' "$AK"; then
+            sed -i 's/^is_slot_device=.*/is_slot_device=1/' "$AK"
+          else
+            echo 'is_slot_device=1' >> "$AK"
+          fi
+
+          BUILD_ID="$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}"
+          ZIP_NAME="AOSPA-marble-${BUILD_ID}.zip"
+          cd "$RUNNER_TEMP/AnyKernel3"
+          zip -r9 "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" . \
+            -x '.git/*' 'README.md' '*.zip'
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          ls -lh "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME"
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-${{ github.sha }}
+
+      - name: Upload kernel artifacts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AOSPA-marble-kernel-${{ github.run_number }}
+          path: |
+            artifacts/*
+            kernel-build.log
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
+          
