@@ -1,35 +1,93 @@
-name: Build AOSPA ShadeDark Kernel (marble)
+name: Build AOSPA ShadeDark Kernel - marble V2
 
 on:
   workflow_dispatch:
     inputs:
+      runner_mode:
+        description: "Persistent = self-hosted runner; hosted = fresh runner and full source sync"
+        type: choice
+        options:
+          - github-hosted
+          - persistent
+        default: github-hosted
+        required: true
+
+      manifest_branch:
+        description: "AOSPA ShadeDark manifest branch"
+        type: string
+        default: "calcite-xiaomi-sm8450"
+        required: true
+
+      build_config_path:
+        description: "Optional BUILD_CONFIG path relative to source root; leave blank for auto-detection"
+        type: string
+        required: false
+
       clang_source:
-        description: "Clang toolchain"
+        description: "Clang toolchain source"
         type: choice
         options:
           - manifest
+          - aosp
           - custom
         default: manifest
         required: true
+
+      clang_version:
+        description: "AOSP Clang directory/version, e.g. clang-r596125 (used when source=aosp)"
+        type: string
+        default: "clang-r596125"
+        required: false
+
       custom_clang_url:
-        description: "URL to a custom Linux x86_64 Clang .tar.gz (only when clang_source=custom)"
+        description: "Direct Linux x86_64 Clang .tar.gz URL (used when source=custom)"
         type: string
         required: false
-      kernelsu:
-        description: "Inject official KernelSU (tiann)"
+
+      enable_kernelsu:
+        description: "Integrate official KernelSU by tiann"
         type: boolean
-        default: false
+        default: true
         required: true
+
+      kernelsu_ref:
+        description: "KernelSU tag or commit SHA; blank = latest tagged version"
+        type: string
+        required: false
+
       susfs:
-        description: "Apply SUSFS for GKI 5.10 (requires KernelSU)"
+        description: "Apply SUSFS kernel + KernelSU patches (requires KernelSU)"
         type: boolean
         default: false
         required: true
+
       susfs_branch:
         description: "SUSFS branch"
         type: string
         default: "gki-android12-5.10"
         required: true
+
+      susfs_ref:
+        description: "Optional SUSFS tag or commit SHA; blank = branch HEAD"
+        type: string
+        required: false
+
+      nomount_mode:
+        description: "NoMount integration mode"
+        type: choice
+        options:
+          - off
+          - module
+          - builtin
+        default: off
+        required: true
+
+      nomount_ref:
+        description: "NoMount setup source branch/tag; default dev"
+        type: string
+        default: "dev"
+        required: true
+
       lto:
         description: "Kernel LTO mode"
         type: choice
@@ -38,45 +96,44 @@ on:
           - full
         default: thin
         required: true
+
       clean_build:
-        description: "Delete kernel output before compiling"
+        description: "Remove kernel output directory before compiling"
         type: boolean
         default: false
         required: true
+
       ccache_size:
         description: "Maximum ccache size"
         type: choice
         options:
-          - 6G
           - 8G
           - 10G
-        default: 8G
+          - 12G
+        default: 10G
         required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: marble-kernel-${{ github.ref }}
+  group: aospa-marble-kernel-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    # Full manifest sync is large. The disk-space step is important on hosted runners.
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
+    runs-on: ${{ inputs.runner_mode == 'persistent' && fromJSON('["self-hosted", "Linux", "X64", "kernel-builder"]') || 'ubuntu-22.04' }}
+    timeout-minutes: 720
 
     env:
       MANIFEST_URL: https://github.com/aospa-shadedark/kernel_manifest
-      MANIFEST_BRANCH: calcite-xiaomi-sm8450
-      KERNEL_BRANCH: calcite
-      KERNEL_DIR: kernel_platform/xiaomi/sm8450
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      MANIFEST_BRANCH: ${{ inputs.manifest_branch }}
+      KERNEL_REL: kernel_platform/xiaomi/sm8450
       CCACHE_MAXSIZE: ${{ inputs.ccache_size }}
-      USE_CCACHE: "1"
 
     steps:
-      - name: Maximize runner disk space
+      - name: Maximize hosted runner disk space
+        if: inputs.runner_mode == 'github-hosted'
         uses: easimon/maximize-build-space@v10
         with:
           root-reserve-mb: 8192
@@ -90,14 +147,15 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev \
-            lib32z1-dev libelf-dev liblz4-tool libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lz4 make openjdk-17-jdk \
-            pahole python3 python-is-python3 rsync schedtool squashfs-tools \
-            unzip wget xz-utils zip zlib1g-dev
+            bc bison build-essential ccache clang curl flex g++-multilib \
+            gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses-dev \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5-dev \
+            libssl-dev libxml2 libxml2-utils lz4 make openjdk-17-jdk pahole \
+            python3 python-is-python3 rsync schedtool squashfs-tools unzip wget \
+            xz-utils zip zlib1g-dev
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
@@ -109,269 +167,383 @@ jobs:
           chmod +x "$HOME/.local/bin/repo"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Select source workspace
+        id: workspace
+        run: |
+          if [ "${{ inputs.runner_mode }}" = "persistent" ]; then
+            SOURCE_DIR="$HOME/aospa-shadedark-marble"
+          else
+            SOURCE_DIR="$RUNNER_TEMP/aospa-shadedark-marble"
+          fi
+          mkdir -p "$SOURCE_DIR"
+          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
+          echo "source_dir=$SOURCE_DIR" >> "$GITHUB_OUTPUT"
+          mkdir -p "$SOURCE_DIR/artifacts"
+          rm -f "$SOURCE_DIR/artifacts/"*
+          rm -f "$SOURCE_DIR/kernel-build.log"
+          echo "Using source workspace: $SOURCE_DIR"
+
       - name: Restore ccache
         uses: actions/cache/restore@v4
         with:
-          path: .ccache
-          key: ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-${{ github.sha }}
+          path: ${{ steps.workspace.outputs.source_dir }}/.ccache
+          key: ccache-marble-${{ runner.os }}-${{ inputs.manifest_branch }}-${{ github.sha }}
           restore-keys: |
-            ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-
+            ccache-marble-${{ runner.os }}-${{ inputs.manifest_branch }}-
             ccache-marble-${{ runner.os }}-
 
       - name: Configure ccache
         run: |
-          mkdir -p "$CCACHE_DIR"
+          mkdir -p "$SOURCE_DIR/.ccache"
           ccache --set-config=max_size="$CCACHE_MAXSIZE"
           ccache --set-config=compiler_check=content
           ccache --set-config=depend_mode=true
           ccache --zero-stats
-          ccache -s
           {
-            echo "CCACHE_DIR=$CCACHE_DIR"
+            echo "CCACHE_DIR=$SOURCE_DIR/.ccache"
             echo "CCACHE_EXEC=$(command -v ccache)"
-            echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE"
-            echo "CCACHE_BASEDIR=/"
-            echo "USE_CCACHE=1"
+            echo "CCACHE_BASEDIR=$SOURCE_DIR"
             echo "CCACHE_COMPILERCHECK=content"
             echo "CCACHE=ccache"
           } >> "$GITHUB_ENV"
+          ccache -s
 
-      - name: Initialize manifest
+      - name: Initialize or update manifest workspace
         run: |
-          mkdir -p "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH"
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          if [ -d .repo ]; then
+            repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH" --no-repo-verify
+          else
+            repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH" --no-repo-verify
+          fi
 
-      - name: Sync full source tree
+      - name: Sync manifest projects
         run: |
-          cd "$GITHUB_WORKSPACE"
-          # This is intentionally a full sync: source history and all manifest projects
-          # are retained, matching the repository's documented setup.
-          repo sync --no-tags --no-clone-bundle --current-branch -j8
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          repo sync -c --no-tags --no-clone-bundle --force-sync -j8
 
-      - name: Verify manifest projects and source branch
+      - name: Validate manifest layout and reset kernel working tree
         run: |
-          test -d "$KERNEL_DIR"
-          test -d kernel_platform/build
-          test -x kernel_platform/build/build.sh
-          echo "Kernel source:"
-          git -C "$KERNEL_DIR" branch --show-current || true
-          git -C "$KERNEL_DIR" rev-parse HEAD
-          echo "Manifest projects:"
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          test -d "$KERNEL_REL"
+          test -x kernel_platform/build/build.sh || {
+            echo "::error::kernel_platform/build/build.sh is missing."
+            exit 1
+          }
+          test -d kernel_platform/prebuilts-master/clang/host/linux-x86
+
+          # Reset only the kernel project before applying optional patches.
+          # This keeps the persistent .repo objects and all synced source projects.
+          git -C "$KERNEL_REL" reset --hard
+          git -C "$KERNEL_REL" clean -fdx
+
+          echo "Manifest branch: $MANIFEST_BRANCH"
           repo list
+          repo manifest -r -o "$SOURCE_DIR/artifacts/manifest.lock.xml"
+          echo "Kernel commit:"
+          git -C "$KERNEL_REL" rev-parse HEAD
+          echo "Kernel branch:"
+          git -C "$KERNEL_REL" branch --show-current || true
+
+      - name: Resolve BUILD_CONFIG
+        id: buildcfg
+        env:
+          USER_BUILD_CONFIG: ${{ inputs.build_config_path }}
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+
+          if [ -n "$USER_BUILD_CONFIG" ]; then
+            CONFIG="$USER_BUILD_CONFIG"
+            [[ "$CONFIG" = /* ]] || CONFIG="$SOURCE_DIR/$CONFIG"
+            test -f "$CONFIG" || {
+              echo "::error::Requested BUILD_CONFIG does not exist: $CONFIG"
+              exit 1
+            }
+          else
+            CONFIG=""
+            for candidate in \
+              "$KERNEL_REL/build.config.msm.waipio" \
+              "$KERNEL_REL/build.config.msm" \
+              "kernel_platform/build.config.msm.waipio" \
+              "kernel_platform/build.config.msm"; do
+              if [ -f "$candidate" ]; then
+                CONFIG="$SOURCE_DIR/$candidate"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$CONFIG" ]; then
+            echo "::error::Could not auto-detect BUILD_CONFIG. Set build_config_path in workflow inputs."
+            find kernel_platform -maxdepth 5 -type f -name 'build.config*' -print | head -100
+            exit 1
+          fi
+
+          echo "path=$CONFIG" >> "$GITHUB_OUTPUT"
+          echo "Selected BUILD_CONFIG: $CONFIG"
 
       - name: Select manifest Clang
         if: inputs.clang_source == 'manifest'
         run: |
-          CLANG_ROOT="$GITHUB_WORKSPACE/kernel_platform/prebuilts-master/clang/host/linux-x86"
-          test -d "$CLANG_ROOT"
+          set -euo pipefail
+          CLANG_ROOT="$SOURCE_DIR/kernel_platform/prebuilts-master/clang/host/linux-x86"
           CLANG_BIN="$(find "$CLANG_ROOT" -type f -path '*/bin/clang' -print -quit)"
-          test -n "$CLANG_BIN"
-          CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
-          echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
-          echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
-          "$CLANG_BIN" --version
-
-      - name: Download custom Clang
-        if: inputs.clang_source == 'custom'
-        run: |
-          test -n "${{ inputs.custom_clang_url }}" || {
-            echo "::error::custom_clang_url is required when clang_source=custom"
-            exit 1
-          }
-          mkdir -p "$RUNNER_TEMP/custom-clang"
-          curl -fL --retry 3 "${{ inputs.custom_clang_url }}" -o "$RUNNER_TEMP/clang.tar.gz"
-          tar -xf "$RUNNER_TEMP/clang.tar.gz" -C "$RUNNER_TEMP/custom-clang"
-          CLANG_BIN="$(find "$RUNNER_TEMP/custom-clang" -type f -path '*/bin/clang' -print -quit)"
           test -n "$CLANG_BIN" || {
-            echo "::error::The archive does not contain */bin/clang"
+            echo "::error::Clang was not found in the manifest prebuilt."
+            find "$CLANG_ROOT" -maxdepth 5 -type f -name clang -print | head
             exit 1
           }
           CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
           echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
           echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
+          echo "CLANG_SOURCE=manifest" >> "$GITHUB_ENV"
           "$CLANG_BIN" --version
 
-      - name: Inject official KernelSU
-        if: inputs.kernelsu
-        working-directory: kernel_platform/xiaomi/sm8450
+      - name: Download AOSP Clang by version
+        if: inputs.clang_source == 'aosp'
+        env:
+          CLANG_VERSION: ${{ inputs.clang_version }}
         run: |
-          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash
-          test -d KernelSU || test -d KernelSU-Next
-          echo "KernelSU source injected."
+          set -euo pipefail
+
+          # AOSP Gitiles stores each prebuilt in a directory named clang-rNNNNNN.
+          # The Gitiles +archive endpoint returns that directory as a tar.gz archive.
+          if [[ ! "$CLANG_VERSION" =~ ^clang-r[0-9]+[a-zA-Z0-9]*$ ]]; then
+            echo "::error::Invalid AOSP Clang version '$CLANG_VERSION'. Use a value such as clang-r596125."
+            exit 1
+          fi
+
+          AOSP_CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${CLANG_VERSION}.tar.gz"
+          CLANG_ROOT="$RUNNER_TEMP/aosp-clang-${CLANG_VERSION}"
+          mkdir -p "$CLANG_ROOT"
+
+          echo "Downloading AOSP Clang: $CLANG_VERSION"
+          echo "Source: $AOSP_CLANG_URL"
+          curl -fL --retry 4 --retry-delay 3 "$AOSP_CLANG_URL" -o "$RUNNER_TEMP/${CLANG_VERSION}.tar.gz"
+          tar -xzf "$RUNNER_TEMP/${CLANG_VERSION}.tar.gz" -C "$CLANG_ROOT"
+
+          CLANG_BIN="$(find "$CLANG_ROOT" -type f -path '*/bin/clang' -print -quit)"
+          if [ -z "$CLANG_BIN" ] && [ -x "$CLANG_ROOT/bin/clang" ]; then
+            CLANG_BIN="$CLANG_ROOT/bin/clang"
+          fi
+          test -n "$CLANG_BIN" || {
+            echo "::error::AOSP archive '$CLANG_VERSION' does not contain bin/clang."
+            find "$CLANG_ROOT" -maxdepth 4 -type f -name clang -print | head
+            exit 1
+          }
+
+          CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
+          echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
+          echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
+          echo "CLANG_SOURCE=aosp" >> "$GITHUB_ENV"
+          "$CLANG_BIN" --version
+
+      - name: Download custom Clang from URL
+        if: inputs.clang_source == 'custom'
+        env:
+          CUSTOM_CLANG_URL: ${{ inputs.custom_clang_url }}
+        run: |
+          set -euo pipefail
+          test -n "$CUSTOM_CLANG_URL" || {
+            echo "::error::custom_clang_url is required when clang_source=custom."
+            exit 1
+          }
+
+          mkdir -p "$RUNNER_TEMP/custom-clang"
+          curl -fL --retry 4 --retry-delay 3 "$CUSTOM_CLANG_URL" -o "$RUNNER_TEMP/custom-clang.tar.gz"
+          tar -xzf "$RUNNER_TEMP/custom-clang.tar.gz" -C "$RUNNER_TEMP/custom-clang"
+
+          CLANG_BIN="$(find "$RUNNER_TEMP/custom-clang" -type f -path '*/bin/clang' -print -quit)"
+          if [ -z "$CLANG_BIN" ] && [ -x "$RUNNER_TEMP/custom-clang/bin/clang" ]; then
+            CLANG_BIN="$RUNNER_TEMP/custom-clang/bin/clang"
+          fi
+          test -n "$CLANG_BIN" || {
+            echo "::error::Custom archive does not contain bin/clang."
+            exit 1
+          }
+
+          CLANG_BIN_DIR="$(dirname "$CLANG_BIN")"
+          echo "$CLANG_BIN_DIR" >> "$GITHUB_PATH"
+          echo "CLANG_PREBUILT_BIN=$CLANG_BIN_DIR" >> "$GITHUB_ENV"
+          echo "CLANG_SOURCE=custom" >> "$GITHUB_ENV"
+          "$CLANG_BIN" --version
+
+      - name: Integrate official KernelSU
+        if: inputs.enable_kernelsu
+        env:
+          KSU_REF: ${{ inputs.kernelsu_ref }}
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR/$KERNEL_REL"
+
+          SETUP="$RUNNER_TEMP/kernelsu-setup.sh"
+          curl -fsSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh -o "$SETUP"
+          chmod +x "$SETUP"
+
+          if [ -n "$KSU_REF" ]; then
+            bash "$SETUP" "$KSU_REF"
+          else
+            bash "$SETUP"
+          fi
+
+          test -L drivers/kernelsu || test -d KernelSU
+          echo "KernelSU ref requested: ${KSU_REF:-latest-tag}"
+          git -C KernelSU rev-parse HEAD
 
       - name: Apply SUSFS kernel and KernelSU patches
         if: inputs.susfs
         env:
+          KSU_ENABLED: ${{ inputs.enable_kernelsu }}
           SUSFS_BRANCH: ${{ inputs.susfs_branch }}
-          KSU_ENABLED: ${{ inputs.kernelsu }}
+          SUSFS_REF: ${{ inputs.susfs_ref }}
         run: |
           set -euo pipefail
           if [ "$KSU_ENABLED" != "true" ]; then
-            echo "::error::SUSFS requires kernelsu=true."
+            echo "::error::SUSFS requires enable_kernelsu=true."
             exit 1
           fi
 
+          SUSFS_ROOT="$RUNNER_TEMP/susfs4ksu"
           git clone --depth=1 --branch "$SUSFS_BRANCH" \
-            https://gitlab.com/simonpunk/susfs4ksu.git "$RUNNER_TEMP/susfs4ksu"
+            https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_ROOT"
 
-          cd "$KERNEL_DIR"
+          if [ -n "$SUSFS_REF" ]; then
+            git -C "$SUSFS_ROOT" fetch --depth=1 origin "$SUSFS_REF"
+            git -C "$SUSFS_ROOT" checkout --detach FETCH_HEAD
+          fi
+
+          cd "$SOURCE_DIR/$KERNEL_REL"
           test -d fs
           test -d include/linux
+          test -d KernelSU
 
-          # Select the patch matching this kernel generation.
-          SUSFS_KERNEL_PATCH="$(find "$RUNNER_TEMP/susfs4ksu/kernel_patches" \
-            -maxdepth 1 -type f -name '*5.10*.patch' -print -quit)"
-          test -n "$SUSFS_KERNEL_PATCH" || {
-            echo "::error::No SUSFS 5.10 kernel patch found in the selected branch."
+          KERNEL_PATCH="$SUSFS_ROOT/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          KSU_PATCH="$SUSFS_ROOT/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+
+          test -s "$KERNEL_PATCH" || {
+            echo "::error::Missing expected SUSFS kernel patch: $KERNEL_PATCH"
+            find "$SUSFS_ROOT/kernel_patches" -maxdepth 3 -type f -print
+            exit 1
+          }
+          test -s "$KSU_PATCH" || {
+            echo "::error::Missing SUSFS KernelSU patch: $KSU_PATCH"
             exit 1
           }
 
-          cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/fs/"* fs/
-          cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/include/linux/"* include/linux/
-          patch --forward -p1 < "$SUSFS_KERNEL_PATCH"
+          # SUSFS implementation files must be copied before testing the diff.
+          cp -a "$SUSFS_ROOT/kernel_patches/fs/." fs/
+          cp -a "$SUSFS_ROOT/kernel_patches/include/linux/." include/linux/
+          cp -f "$KSU_PATCH" KernelSU/10_enable_susfs_for_ksu.patch
 
-          KSU_DIR=""
-          for d in KernelSU KernelSU-Next; do
-            if [ -d "$d" ]; then KSU_DIR="$d"; break; fi
-          done
-          test -n "$KSU_DIR" || {
-            echo "::error::KernelSU directory not found after setup."
-            exit 1
-          }
-
-          KSU_SUSFS_PATCH="$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-          test -f "$KSU_SUSFS_PATCH"
-          cp "$KSU_SUSFS_PATCH" "$KSU_DIR/"
-          if [ -f "$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/kernel/sucompat.h" ]; then
-            cp "$RUNNER_TEMP/susfs4ksu/kernel_patches/KernelSU/kernel/sucompat.h" \
-              "$KSU_DIR/kernel/sucompat.h"
-          fi
+          echo "Testing SUSFS KernelSU patch..."
           (
-            cd "$KSU_DIR"
-            patch --forward -p1 < 10_enable_susfs_for_ksu.patch
+            cd KernelSU
+            patch --batch --forward --fuzz=0 --dry-run -p1 < 10_enable_susfs_for_ksu.patch
+            patch --batch --forward --fuzz=0 -p1 < 10_enable_susfs_for_ksu.patch
           )
 
-          # Enable only symbols that exist in this source's Kconfig.
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          test -f "$DEFCONFIG"
-          for symbol in KSU KSU_SUSFS KSU_SUSFS_HAS_MAGIC_MOUNT \
-                        KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT \
-                        KSU_SUSFS_AUTO_ADD_SUS_KSU \
-                        KSU_SUSFS_AUTO_ADD_SUS_KSU \
-                        KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
-            if grep -RqsE "config ${symbol}([[:space:]]|$)" \
-              --include='Kconfig*' .; then
-              scripts/config --file "$DEFCONFIG" --enable "$symbol"
-            fi
-          done
+          echo "Testing SUSFS kernel patch..."
+          patch --batch --forward --fuzz=0 --dry-run -p1 < "$KERNEL_PATCH"
+          patch --batch --forward --fuzz=0 -p1 < "$KERNEL_PATCH"
 
-      - name: Locate build configuration
-        id: buildcfg
-        run: |
-          CONFIG="$(find "$KERNEL_DIR" -maxdepth 3 -type f \
-            -name 'build.config.msm.waipio' -print -quit)"
-          if [ -z "$CONFIG" ]; then
-            CONFIG="$(find kernel_platform -type f \
-              -name 'build.config.msm.waipio' -print -quit)"
+          if find . -type f \( -name '*.rej' -o -name '*.orig' \) | grep -q .; then
+            echo "::error::Patch reject/orig files detected; refusing to continue."
+            find . -type f \( -name '*.rej' -o -name '*.orig' \) -print
+            exit 1
           fi
-          test -n "$CONFIG" || {
-            echo "::error::build.config.msm.waipio not found in synced manifest."
+
+          echo "SUSFS commit: $(git -C "$SUSFS_ROOT" rev-parse HEAD)"
+          echo "SUSFS kernel and KernelSU patches applied successfully."
+
+      - name: Download official NoMount module artifact
+        if: inputs.nomount_mode == 'module'
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$RUNNER_TEMP/nomount-release.json"
+          curl -fsSL https://api.github.com/repos/maxsteeel/nomount/releases/latest             -o "$RELEASE_JSON"
+
+          ASSET_URL="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); a=[x for x in d.get("assets",[]) if x["name"].lower().endswith(".zip")]; print(a[0]["browser_download_url"] if a else "")' "$RELEASE_JSON")"
+          ASSET_NAME="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); a=[x for x in d.get("assets",[]) if x["name"].lower().endswith(".zip")]; print(a[0]["name"] if a else "")' "$RELEASE_JSON")"
+
+          test -n "$ASSET_URL" || {
+            echo "::error::No ZIP asset found in the latest NoMount release."
             exit 1
           }
-          echo "path=$CONFIG" >> "$GITHUB_OUTPUT"
-          echo "Using $CONFIG"
 
-      - name: Clean previous kernel output
-        if: inputs.clean_build
-        run: |
-          rm -rf kernel_platform/out
-          rm -rf "$KERNEL_DIR/out"
+          curl -fL --retry 3 "$ASSET_URL" -o "$SOURCE_DIR/artifacts/$ASSET_NAME"
+          unzip -t "$SOURCE_DIR/artifacts/$ASSET_NAME"
+          echo "Downloaded NoMount release asset: $ASSET_NAME"
+          echo "This is a separate KernelSU module ZIP; it is not embedded in AnyKernel3."
 
-      - name: Build kernel
+      - name: Integrate NoMount built-in
+        if: inputs.nomount_mode == 'builtin'
         env:
-          BUILD_CONFIG: ${{ steps.buildcfg.outputs.path }}
-          VARIANT: gki
-          LTO: ${{ inputs.lto }}
-          CCACHE: ccache
-          CCACHE_EXEC: /usr/bin/ccache
+          NOMOUNT_REF: ${{ inputs.nomount_ref }}
         run: |
-          set -o pipefail
-          export PATH="$CLANG_PREBUILT_BIN:$PATH"
-          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
-          export CCACHE_MAXSIZE="$CCACHE_MAXSIZE"
-          export CCACHE_BASEDIR=/
-          export USE_CCACHE=1
-          export CCACHE_COMPILERCHECK=content
-          export CCACHE=ccache
-          export CCACHE_EXEC="$(command -v ccache)"
+          set -euo pipefail
+          cd "$SOURCE_DIR/$KERNEL_REL"
 
-          echo "BUILD_CONFIG=$BUILD_CONFIG"
-          echo "VARIANT=$VARIANT LTO=$LTO"
-          ccache -s
-          bash kernel_platform/build/build.sh 2>&1 | tee kernel-build.log
-          ccache -s
+          SETUP="$RUNNER_TEMP/nomount-setup.sh"
+          curl -fsSL https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh \
+            -o "$SETUP"
+          chmod +x "$SETUP"
+          bash "$SETUP" "$NOMOUNT_REF"
 
-      - name: Find and stage Image
-        id: image
-        run: |
-          IMAGE="$(find kernel_platform -type f -path '*/dist/Image' -print -quit)"
-          if [ -z "$IMAGE" ]; then
-            IMAGE="$(find kernel_platform -type f -name Image \
-              -not -path '*/prebuilts/*' -print -quit)"
-          fi
-          test -n "$IMAGE" || {
-            echo "::error::Kernel Image was not produced."
+          test -d fs/nomount || {
+            echo "::error::NoMount setup did not create fs/nomount."
             exit 1
           }
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          cp "$IMAGE" "$GITHUB_WORKSPACE/artifacts/Image"
-          echo "path=$IMAGE" >> "$GITHUB_OUTPUT"
-          ls -lh "$GITHUB_WORKSPACE/artifacts/Image"
+          grep -q 'source "fs/nomount/Kconfig"' fs/Kconfig
+          grep -q 'nomount' fs/Makefile
+          echo "NoMount source integrated from ref: $NOMOUNT_REF"
 
-      - name: Package Image-only AnyKernel3 ZIP
+      - name: Apply kernel config options
+        env:
+          KSU_ENABLED: ${{ inputs.enable_kernelsu }}
+          SUSFS_ENABLED: ${{ inputs.susfs }}
+          NOMOUNT_MODE: ${{ inputs.nomount_mode }}
+          BUILD_CONFIG: ${{ steps.buildcfg.outputs.path }}
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$RUNNER_TEMP/AnyKernel3"
-          rm -rf "$RUNNER_TEMP/AnyKernel3/.git"
-          cp artifacts/Image "$RUNNER_TEMP/AnyKernel3/Image"
+          set -euo pipefail
+          cd "$SOURCE_DIR"
 
-          AK="$RUNNER_TEMP/AnyKernel3/anykernel.sh"
-          if grep -q '^device.name1=' "$AK"; then
-            sed -i 's/^device.name1=.*/device.name1=marble/' "$AK"
-          else
-            echo 'device.name1=marble' >> "$AK"
+          # Source the selected build config in a subshell to resolve DEFCONFIG.
+          DEFCONFIG_REL="$(bash -c 'source "$1" >/dev/null 2>&1; printf "%s" "${DEFCONFIG:-}"' _ "$BUILD_CONFIG")"
+          test -n "$DEFCONFIG_REL" || {
+            echo "::error::DEFCONFIG was not exported by BUILD_CONFIG."
+            grep -nE '(^|[[:space:]])DEFCONFIG=' "$BUILD_CONFIG" || true
+            exit 1
+          }
+
+          KERNEL_ROOT="$SOURCE_DIR/$KERNEL_REL"
+          DEFCONFIG_FILE="$KERNEL_ROOT/arch/arm64/configs/$DEFCONFIG_REL"
+          if [ ! -f "$DEFCONFIG_FILE" ]; then
+            DEFCONFIG_FILE="$KERNEL_ROOT/$DEFCONFIG_REL"
           fi
+          test -f "$DEFCONFIG_FILE" || {
+            echo "::error::Resolved defconfig not found: $DEFCONFIG_REL"
+            find "$KERNEL_ROOT/arch/arm64/configs" -type f -name '*defconfig' | head -100
+            exit 1
+          }
 
-          if grep -q '^is_slot_device=' "$AK"; then
-            sed -i 's/^is_slot_device=.*/is_slot_device=1/' "$AK"
-          else
-            echo 'is_slot_device=1' >> "$AK"
-          fi
+          CONFIG_TOOL="$KERNEL_ROOT/scripts/config"
+          test -f "$CONFIG_TOOL" || {
+            echo "::error::scripts/config is missing."
+            exit 1
+          }
 
-          BUILD_ID="$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}"
-          ZIP_NAME="AOSPA-marble-${BUILD_ID}.zip"
-          cd "$RUNNER_TEMP/AnyKernel3"
-          zip -r9 "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME" . \
-            -x '.git/*' 'README.md' '*.zip'
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-          ls -lh "$GITHUB_WORKSPACE/artifacts/$ZIP_NAME"
+          has_symbol() {
+            grep -RqsE "^[[:space:]]*config $1([[:space:]]|$)" \
+              --include='Kconfig*' "$KERNEL_ROOT"
+          }
 
-      - name: Save ccache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .ccache
-          key: ccache-marble-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-${{ github.sha }}
-
-      - name: Upload kernel artifacts and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: AOSPA-marble-kernel-${{ github.run_number }}
-          path: |
-            artifacts/*
-            kernel-build.log
-          if-no-files-found: warn
-          compression-level: 0
-          retention-days: 14
-          
+          enable_symbol() {
+            symbol="$1"
+            required="$2"
+            if has_symbol "$symbol"; then
+              bash "$CONFIG_TOOL" --file "$DEFCONFIG_FILE" --en
