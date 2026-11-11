@@ -1,5 +1,5 @@
 # AOSPA kernel builder for MARBLE
 
-- LKM Kernelsu
+- KernelSU (inbuilt + LKM)
 - Nomount
 - Susfs (broken)
