@@ -1,0 +1,695 @@
+
+name: AOSPA ShadeDark Calcite Kernel Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_branch:
+        description: Kernel manifest branch
+        required: true
+        default: calcite-xiaomi-sm8450
+        type: string
+
+      ksu_ref:
+        description: KernelSU Official tiann ref
+        required: true
+        default: main
+        type: string
+
+      susfs_mode:
+        description: SUSFS compatibility policy
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - off
+          - required
+
+      susfs_patch_url:
+        description: Direct URL to compatible SUSFS patch (optional)
+        required: false
+        default: ""
+        type: string
+
+      sync_jobs:
+        description: Repo sync parallel jobs
+        required: true
+        default: "8"
+        type: choice
+        options:
+          - "4"
+          - "6"
+          - "8"
+          - "10"
+          - "12"
+
+      build_jobs:
+        description: Kernel compilation jobs
+        required: true
+        default: "8"
+        type: choice
+        options:
+          - "2"
+          - "4"
+          - "6"
+          - "8"
+          - "10"
+          - "12"
+          - "16"
+
+      clean_build:
+        description: Clean kernel output before build
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: calcite-kernel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 360
+
+    env:
+      WORKDIR: ${{ github.workspace }}/_build/aospa-calcite
+      MANIFEST_URL: https://github.com/aospa-shadedark/kernel_manifest
+      MANIFEST_BRANCH: ${{ inputs.manifest_branch }}
+      KSU_REF: ${{ inputs.ksu_ref }}
+      SUSFS_MODE: ${{ inputs.susfs_mode }}
+      SUSFS_PATCH_URL: ${{ inputs.susfs_patch_url }}
+      SYNC_JOBS: ${{ inputs.sync_jobs }}
+      BUILD_JOBS: ${{ inputs.build_jobs }}
+      NOMOUNT_REF: v2.2.0
+
+    steps:
+
+      # --------------------------------------------------
+      # CHECK ENVIRONMENT
+      # --------------------------------------------------
+
+      - name: Checkout workflow
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(uname -m)" = "x86_64" || {
+            echo "::error::Linux x86_64 runner required"
+            exit 1
+          }
+
+          sudo apt-get update
+
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            ccache \
+            curl \
+            flex \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            lz4 \
+            python3 \
+            rsync \
+            unzip \
+            zip \
+            zstd \
+            libxml2-utils \
+            xsltproc
+
+          sudo apt-get clean
+
+          mkdir -p "$WORKDIR"
+
+          FREE_GB=$(df -BG --output=avail "$WORKDIR" | tail -1 | tr -dc '0-9')
+
+          echo "Available disk: ${FREE_GB} GB"
+
+          if [ "${FREE_GB:-0}" -lt 100 ]; then
+            echo "::error::Minimum 100 GB free disk required"
+            exit 1
+          fi
+
+          free -h
+          df -h "$WORKDIR"
+
+      # --------------------------------------------------
+      # INSTALL REPO
+      # --------------------------------------------------
+
+      - name: Install Google Repo
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.local/bin"
+
+          curl -fL --retry 5 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/.local/bin/repo"
+
+          chmod +x "$HOME/.local/bin/repo"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # --------------------------------------------------
+      # SOURCE SYNC
+      # --------------------------------------------------
+
+      - name: Initialize AOSPA manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$WORKDIR"
+          mkdir -p "$WORKDIR"
+
+          cd "$WORKDIR"
+
+          repo init \
+            -u "$MANIFEST_URL" \
+            -b "$MANIFEST_BRANCH" \
+            --depth=1
+
+          # Device kernel output repository required by build.sh.
+          mkdir -p .repo/local_manifests
+
+          cat > .repo/local_manifests/marble.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remote name="github" fetch="https://github.com/" />
+            <project
+              name="aospa-shadedark/android_device_xiaomi_marble-kernel"
+              path="device/xiaomi/marble-kernel"
+              remote="github"
+              revision="calcite" />
+          </manifest>
+          XML
+
+      - name: Sync complete kernel source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$WORKDIR"
+
+          repo sync \
+            --current-branch \
+            --no-tags \
+            --no-clone-bundle \
+            --force-sync \
+            -j"$SYNC_JOBS"
+
+          # Verify all manifest components.
+          test -d kernel_platform/xiaomi/sm8450
+          test -d kernel_platform/xiaomi/sm8450-modules
+          test -d kernel_platform/xiaomi/sm8450-devicetrees
+
+          test -d kernel_platform/build
+          test -d kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r596125
+          test -d kernel_platform/prebuilts/kernel-build-tools/linux-x86
+
+          test -d device/xiaomi/marble-kernel
+
+          repo manifest -r > manifest-pinned.xml
+
+          echo "Manifest synchronization successful."
+
+      # --------------------------------------------------
+      # CCACHE
+      # --------------------------------------------------
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: calcite-r596125-${{ inputs.manifest_branch }}-${{ github.run_id }}
+          restore-keys: |
+            calcite-r596125-${{ inputs.manifest_branch }}-
+            calcite-r596125-
+
+      - name: Configure ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.cache/ccache"
+
+          ccache --set-config=cache_dir="$HOME/.cache/ccache"
+          ccache --set-config=max_size=12G
+          ccache --set-config=compiler_check=content
+
+          # Make clang calls pass through ccache.
+          CCACHE_BIN="$RUNNER_TEMP/ccache-bin"
+          mkdir -p "$CCACHE_BIN"
+
+          ln -sf "$(command -v ccache)" "$CCACHE_BIN/clang"
+          ln -sf "$(command -v ccache)" "$CCACHE_BIN/clang++"
+
+          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
+
+          ccache --show-config
+
+      # --------------------------------------------------
+      # KERNELSU OFFICIAL
+      # --------------------------------------------------
+
+      - name: Integrate KernelSU Official
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          cd "$KERNEL_SRC"
+
+          if [ -e drivers/kernelsu ]; then
+            test -e drivers/kernelsu/Kconfig
+            test -d KernelSU || {
+              echo "::error::Unrecognized existing KernelSU installation"
+              exit 1
+            }
+
+            echo "Existing KernelSU integration detected."
+
+          else
+            curl -fL --retry 5 \
+              https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
+              -o "$RUNNER_TEMP/ksu-setup.sh"
+
+            bash "$RUNNER_TEMP/ksu-setup.sh" "$KSU_REF"
+          fi
+
+          test -e drivers/kernelsu/Kconfig
+          test -d KernelSU
+
+          echo "KernelSU Official integration verified."
+
+          {
+            echo "KSU_COMMIT=$(git -C KernelSU rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # NOMOUNT BUILT-IN
+      # --------------------------------------------------
+
+      - name: Integrate NoMount v2.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          cd "$KERNEL_SRC"
+
+          curl -fL --retry 5 \
+            "https://raw.githubusercontent.com/maxsteeel/nomount/${NOMOUNT_REF}/kernel/setup.sh" \
+            -o "$RUNNER_TEMP/nomount-setup.sh"
+
+          # Official NoMount integration.
+          sh "$RUNNER_TEMP/nomount-setup.sh" "$NOMOUNT_REF"
+
+          # Validate upstream source.
+          test -L fs/nomount
+          test -f fs/nomount/Kconfig
+          test -f fs/nomount/Makefile
+
+          grep -Fq 'source "fs/nomount/Kconfig"' fs/Kconfig
+          grep -Fq 'obj-$(CONFIG_NOMOUNT) += nomount/' fs/Makefile
+
+          NOMOUNT_COMMIT=$(git -C NoMount rev-parse HEAD)
+
+          echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" >> "$GITHUB_ENV"
+
+          echo "NoMount source integration verified."
+
+      # --------------------------------------------------
+      # SUSFS FAIL-SAFE
+      # --------------------------------------------------
+
+      - name: SUSFS compatibility validation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          cd "$KERNEL_SRC"
+
+          SUSFS_APPLIED=0
+
+          if [ "$SUSFS_MODE" = "off" ]; then
+            echo "SUSFS explicitly disabled."
+
+          elif [ -n "$SUSFS_PATCH_URL" ]; then
+
+            curl -fL --retry 3 \
+              "$SUSFS_PATCH_URL" \
+              -o "$RUNNER_TEMP/susfs.patch"
+
+            if git apply --check "$RUNNER_TEMP/susfs.patch"; then
+
+              git apply "$RUNNER_TEMP/susfs.patch"
+
+              SUSFS_APPLIED=1
+
+              echo "SUSFS patch applied successfully."
+
+            elif [ "$SUSFS_MODE" = "required" ]; then
+
+              echo "::error::SUSFS patch is incompatible."
+              exit 1
+
+            else
+
+              echo "::warning::SUSFS patch incompatible. Skipping."
+
+            fi
+
+          elif [ "$SUSFS_MODE" = "required" ]; then
+
+            echo "::error::SUSFS required but no patch URL supplied."
+            exit 1
+
+          else
+
+            echo "::warning::No SUSFS patch supplied. Building without SUSFS patch."
+
+          fi
+
+          echo "SUSFS_PATCH_APPLIED=$SUSFS_APPLIED" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # PREPARE BUILD SCRIPT
+      # --------------------------------------------------
+
+      - name: Prepare Calcite build script
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+          BUILD_SCRIPT="$KERNEL_SRC/build.sh"
+
+          test -f "$BUILD_SCRIPT"
+
+          # Required by upstream build.sh.
+          cat > "$KERNEL_SRC/.build.rc" <<EOF
+          SRC_ROOT=$WORKDIR
+          EOF
+
+          # Apply minimal local corrections.
+          python3 - "$BUILD_SCRIPT" "$SUSFS_PATCH_APPLIED" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          susfs_applied = sys.argv[2] == "1"
+
+          source = path.read_text()
+
+          # 1. Control compile parallelism.
+          old = "make -j$(nproc --all)"
+          new = "make -j${BUILD_JOBS:-$(nproc --all)}"
+
+          if old not in source:
+              raise SystemExit("Cannot locate upstream make job declaration.")
+
+          source = source.replace(old, new, 1)
+
+          # 2. Fix modules_out use before initialization.
+          old_ksu = 'ksu_path="$(find $modules_out -name'
+
+          if old_ksu not in source:
+              raise SystemExit("Cannot locate KernelSU module lookup.")
+
+          source = source.replace(
+              old_ksu,
+              'modules_out="out/modules/lib/modules/$(ls -t out/modules/lib/modules/ | head -n1)"\n\n'
+              + old_ksu,
+              1
+          )
+
+          # 3. Enable NoMount and optionally SUSFS
+          # after the vendor config merge and KernelSU setting.
+          pattern = re.compile(
+              r"(?m)^([ \t]*)-m CONFIG_KSU[ \t]*$"
+          )
+
+          matches = list(pattern.finditer(source))
+
+          if len(matches) != 1:
+              raise SystemExit(
+                  "Cannot uniquely locate CONFIG_KSU in upstream build.sh."
+              )
+
+          indent = matches[0].group(1)
+
+          options = [
+              "-m CONFIG_KSU \\",
+              "--enable NOMOUNT"
+          ]
+
+          if susfs_applied:
+              options.append("--enable KSU_SUSFS")
+
+          replacement = (
+              indent
+              + ("\n" + indent).join(options)
+              + "\n\n"
+              + indent
+              + "m olddefconfig"
+          )
+
+          source = pattern.sub(lambda _: replacement, source, count=1)
+
+          path.write_text(source)
+
+          print("Calcite build script patched successfully.")
+          PY
+
+          bash -n "$BUILD_SCRIPT"
+
+      # --------------------------------------------------
+      # CLEAN OUTPUT
+      # --------------------------------------------------
+
+      - name: Clean previous kernel output
+        if: ${{ inputs.clean_build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          rm -rf "$KERNEL_SRC/out"
+
+          rm -rf "$WORKDIR/device/xiaomi/marble-kernel/Image"
+
+          rm -rf "$WORKDIR/device/xiaomi/marble-kernel/dtbs"
+
+          rm -rf "$WORKDIR/device/xiaomi/marble-kernel/vendor_ramdisk"
+
+          rm -rf "$WORKDIR/device/xiaomi/marble-kernel/vendor_dlkm"
+
+      # --------------------------------------------------
+      # BUILD
+      # --------------------------------------------------
+
+      - name: Build AOSPA Calcite marble kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          TC_DIR="$WORKDIR/kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r596125/bin"
+
+          PREBUILTS="$WORKDIR/kernel_platform/prebuilts/kernel-build-tools/linux-x86/bin"
+
+          CCACHE_BIN="$RUNNER_TEMP/ccache-bin"
+
+          export BUILD_JOBS
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          export CCACHE_BASEDIR="$WORKDIR"
+          export CCACHE_COMPILERCHECK=content
+
+          export PATH="$CCACHE_BIN:$TC_DIR:$PREBUILTS:$PATH"
+
+          cd "$KERNEL_SRC"
+
+          ./build.sh marble 2>&1 | tee "$WORKDIR/build.log"
+
+      # --------------------------------------------------
+      # VALIDATE
+      # --------------------------------------------------
+
+      - name: Validate kernel configuration and outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KERNEL_SRC="$WORKDIR/kernel_platform/xiaomi/sm8450"
+
+          DEVICE_OUT="$WORKDIR/device/xiaomi/marble-kernel"
+
+          CONFIG="$KERNEL_SRC/out/.config"
+
+          test -s "$DEVICE_OUT/Image"
+          test -s "$CONFIG"
+          test -s "$DEVICE_OUT/dtbo.img"
+
+          # KernelSU Official
+          grep -Eq '^CONFIG_KSU=(m|y)$' "$CONFIG" || {
+            echo "::error::KernelSU is not enabled."
+            exit 1
+          }
+
+          # NoMount built-in
+          grep -q '^CONFIG_NOMOUNT=y$' "$CONFIG" || {
+            echo "::error::NoMount is not built-in."
+            exit 1
+          }
+
+          # Verify compiled NoMount objects.
+          find "$KERNEL_SRC/out/fs/nomount" \
+            -type f \
+            \( -name '*.o' -o -name 'built-in.a' \) \
+            -print -quit | grep -q . || {
+              echo "::error::NoMount object files were not generated."
+              exit 1
+          }
+
+          # SUSFS fail-safe validation
+          if grep -q '^CONFIG_KSU_SUSFS=y$' "$CONFIG"; then
+
+            SUSFS_STATUS="enabled"
+
+          elif grep -q '^CONFIG_KSU_SUSFS=m$' "$CONFIG"; then
+
+            SUSFS_STATUS="module"
+
+          else
+
+            SUSFS_STATUS="disabled"
+
+            if [ "$SUSFS_MODE" = "required" ]; then
+              echo "::error::SUSFS required but not enabled."
+              exit 1
+            fi
+
+            echo "::warning::SUSFS is not enabled in final config."
+
+          fi
+
+          mkdir -p "$WORKDIR/artifacts"
+
+          cp "$CONFIG" "$WORKDIR/artifacts/kernel.config"
+
+          cp "$WORKDIR/manifest-pinned.xml" "$WORKDIR/artifacts/"
+
+          {
+            echo "device=marble"
+            echo "manifest_branch=$MANIFEST_BRANCH"
+            echo "kernel_commit=$(git -C "$KERNEL_SRC" rev-parse HEAD)"
+            echo "modules_commit=$(git -C "$WORKDIR/kernel_platform/xiaomi/sm8450-modules" rev-parse HEAD)"
+            echo "dt_commit=$(git -C "$WORKDIR/kernel_platform/xiaomi/sm8450-devicetrees" rev-parse HEAD)"
+            echo "kernelsu=official"
+            echo "kernelsu_ref=$KSU_REF"
+            echo "kernelsu_commit=$KSU_COMMIT"
+            echo "nomount_version=$NOMOUNT_REF"
+            echo "nomount_commit=$NOMOUNT_COMMIT"
+            echo "nomount_mode=builtin"
+            echo "susfs=$SUSFS_STATUS"
+            echo "build_jobs=$BUILD_JOBS"
+          } > "$WORKDIR/artifacts/build-info.txt"
+
+          echo "All kernel validation checks passed."
+
+      # --------------------------------------------------
+      # PACKAGE PAYLOAD
+      # --------------------------------------------------
+
+      - name: Package kernel payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEVICE_OUT="$WORKDIR/device/xiaomi/marble-kernel"
+
+          ARTIFACT="$WORKDIR/artifacts"
+
+          test -s "$DEVICE_OUT/Image"
+          test -d "$DEVICE_OUT/dtbs"
+          test -d "$DEVICE_OUT/vendor_ramdisk"
+          test -d "$DEVICE_OUT/vendor_dlkm"
+
+          mkdir -p "$ARTIFACT/payload"
+
+          cp "$DEVICE_OUT/Image" "$ARTIFACT/payload/"
+
+          cp "$DEVICE_OUT/dtbo.img" "$ARTIFACT/payload/"
+
+          cp -a "$DEVICE_OUT/dtbs" "$ARTIFACT/payload/"
+
+          cp -a "$DEVICE_OUT/vendor_ramdisk" "$ARTIFACT/payload/"
+
+          cp -a "$DEVICE_OUT/vendor_dlkm" "$ARTIFACT/payload/"
+
+          cd "$ARTIFACT/payload"
+
+          zip -qr "$ARTIFACT/Calcite-marble-kernel-payload.zip" .
+
+          cd "$ARTIFACT"
+
+          sha256sum Calcite-marble-kernel-payload.zip \
+            > Calcite-marble-kernel-payload.zip.sha256
+
+      # --------------------------------------------------
+      # CACHE STATISTICS
+      # --------------------------------------------------
+
+      - name: Show ccache statistics
+        if: always()
+        shell: bash
+        run: |
+          ccache --show-stats || true
+
+      # --------------------------------------------------
+      # UPLOAD
+      # --------------------------------------------------
+
+      - name: Upload successful artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AOSPA-Calcite-marble-${{ github.run_number }}
+          path: |
+            ${{ github.workspace }}/_build/aospa-calcite/artifacts/
+            ${{ github.workspace }}/_build/aospa-calcite/build.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AOSPA-Calcite-build-failure-${{ github.run_number }}
+          path: |
+            ${{ github.workspace }}/_build/aospa-calcite/build.log
+          if-no-files-found: warn
+          retention-days: 7
