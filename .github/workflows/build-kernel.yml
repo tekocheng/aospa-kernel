@@ -1,4 +1,4 @@
-name: Build AOSPA ShadeDark Kernel - marble V2
+name: Build AOSPA ShadeDark Kernel - Marble
 
 on:
   workflow_dispatch:
