@@ -67,14 +67,14 @@ runs:
       uses: actions/cache@v6.1.0
       with:
         path: kernel_platform/clang
-        key: ${{ runner.os }}-clang-${{ inputs.clang-dir }}
+        key: ${{ runner.os }}-clang-${{ inputs['clang-dir'] }}
         restore-keys: |
-          ${{ runner.os }}-clang-${{ inputs.clang-dir }}-
+          ${{ runner.os }}-clang-${{ inputs['clang-dir'] }}-
 
     - name: Setup Clang
       shell: bash
       env:
-        CLANG_DIR: ${{ inputs.clang-dir }}
+        CLANG_DIR: ${{ inputs['clang-dir'] }}
       run: |
         set -euo pipefail
         mkdir -p kernel_platform/clang
