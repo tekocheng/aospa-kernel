@@ -29,6 +29,8 @@ revision() {
   echo "KernelSU variant: ${KSU_VARIANT:-unknown}"
   echo "KernelSU repository: ${KSU_REPO:-unknown}"
   echo "KernelSU ref: ${KSU_REF:-unknown}"
+  echo "NoMount repository: ${NOMOUNT_REPO:-maxsteeel/nomount}"
+  echo "NoMount ref: ${NOMOUNT_REF:-unknown}"
   echo
   echo "Manifest repository: $(revision "$ROOT/.repo/manifests")"
   echo
@@ -42,7 +44,7 @@ revision() {
   echo "Kernel configuration"
   echo "--------------------"
   if [ -f "$KERNEL_TREE/out/.config" ]; then
-    grep -E '^(CONFIG_KSU|CONFIG_LTO_CLANG_FULL|CONFIG_LTO_NONE)=' "$KERNEL_TREE/out/.config" || true
+    grep -E '^(CONFIG_KSU|CONFIG_NOMOUNT|CONFIG_LTO_CLANG_FULL|CONFIG_LTO_NONE)=' "$KERNEL_TREE/out/.config" || true
   else
     echo "out/.config not found"
   fi
