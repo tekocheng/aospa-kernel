@@ -132,6 +132,7 @@ jobs:
           path: |
             device/xiaomi/marble-kernel/Image
             build-info.txt
+            resolved-manifest.xml
           if-no-files-found: error
           compression-level: 9
           retention-days: 14
