@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: aospa-marble-kernelsu-lkm-${{ inputs.ksu_variant }}
+  group: aospa-marble-kernelsu-lkm-${{ inputs.source_branch }}-${{ inputs.ksu_variant }}
   cancel-in-progress: false
 
 env:
