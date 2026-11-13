@@ -117,7 +117,7 @@ jobs:
           cd kernel_platform/xiaomi/sm8450
           export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
           ./build.sh marble --only-kernel
-          test -s device/xiaomi/marble-kernel/Image
+          test -s "$GITHUB_WORKSPACE/device/xiaomi/marble-kernel/Image"
 
       - name: Generate build metadata
         shell: bash
