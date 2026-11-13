@@ -26,8 +26,8 @@ Both workflows are started manually through the **Actions** tab and run on GitHu
 
 | Workflow | Build mode | Artifact | Contents |
 | --- | --- | --- | --- |
-| Kernel Image | `./build.sh marble --only-kernel` | `kernel-image` | Raw `Image` + `build-info.txt` |
-| KernelSU LKM Module | `./build.sh marble --only-modules` | `ksu-lkm-module` | `kernelsu.ko`, `nomount.ko` + `build-info.txt` |
+| Kernel Image | `./build.sh marble --only-kernel` | `kernel-image` | Raw `Image`, `build-info.txt`, and `resolved-manifest.xml` |
+| KernelSU LKM Module | `./build.sh marble --only-modules` | `ksu-lkm-module` | `kernelsu.ko`, `nomount.ko`, `build-info.txt`, and `resolved-manifest.xml` |
 
 ### Run a build
 
@@ -96,10 +96,11 @@ Each artifact includes `build-info.txt`, which records:
 - Device target and build type.
 - Workflow name, run ID, attempt, and builder commit.
 - Clang toolchain directory and pinned KernelSU / NoMount revisions.
-- Git revisions for the kernel, build tools, device trees, and vendor modules.
+- Git revisions for the manifest repository, kernel, build tools, device trees, and vendor modules.
+- A resolved Repo manifest (`resolved-manifest.xml`) with exact project revisions.
 - Relevant options from the generated kernel `.config`.
 
-KernelSU and NoMount are pinned so their setup scripts do not silently follow a moving branch. The AOSPA manifest is still initialized from its upstream `main` branch; the recorded component revisions provide a trace of what Repo synchronized for each run.
+KernelSU and NoMount are pinned so their setup scripts do not silently follow a moving branch. The AOSPA manifest is still initialized from its upstream `main` branch. Each artifact now includes `resolved-manifest.xml`, which records the exact project revisions Repo synchronized for that run.
 
 The Clang cache is keyed by runner OS and toolchain directory. Build jobs have a six-hour timeout, use Bash strict mode in setup/build steps, and fail artifact upload when expected files are absent.
 
