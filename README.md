@@ -46,6 +46,9 @@ The image workflow produces a raw kernel `Image`. It does **not** create a `boot
 ```text
 .
 ├── .github/
+│   ├── actions/
+│   │   └── setup-build/
+│   │       └── action.yml
 │   └── workflows/
 │       ├── build-image.yml
 │       ├── build-lkm.yml
@@ -102,7 +105,7 @@ Each artifact includes `build-info.txt`, which records:
 
 KernelSU and NoMount are pinned so their setup scripts do not silently follow a moving branch. The AOSPA manifest is still initialized from its upstream `main` branch. Each artifact now includes `resolved-manifest.xml`, which records the exact project revisions Repo synchronized for that run.
 
-The Clang cache is keyed by runner OS and toolchain directory. Build jobs have a six-hour timeout, use Bash strict mode in setup/build steps, and fail artifact upload when expected files are absent.
+The shared composite action keeps runner preparation, Python setup, Repo sync, and Clang caching identical between the two workflows. The Clang cache is keyed by runner OS and toolchain directory. Build jobs have a six-hour timeout, use Bash strict mode in setup/build steps, and fail artifact upload when expected files are absent.
 
 ## Cleanup workflow
 
