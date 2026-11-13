@@ -3,6 +3,14 @@ name: KernelSU LKM
 on:
   workflow_dispatch:
     inputs:
+      source_branch:
+        description: AOSPA Marble kernel and device source branch
+        required: true
+        type: choice
+        default: beryl
+        options:
+          - beryl
+          - vauxite
       ksu_variant:
         description: KernelSU variant to build as LKM
         required: true
@@ -41,6 +49,7 @@ jobs:
         uses: ./.github/actions/setup-build
         with:
           clang-dir: ${{ env.CLANG_DIR }}
+          source-branch: ${{ inputs.source_branch }}
 
       - name: Resolve KernelSU variant
         id: ksu
@@ -136,6 +145,7 @@ jobs:
           KSU_REPO: ${{ steps.ksu.outputs.repo }}
           KSU_REF: ${{ steps.ksu.outputs.ref }}
           KSU_VARIANT: ${{ inputs.ksu_variant }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: |
           set -euo pipefail
           bash scripts/write-build-info.sh
