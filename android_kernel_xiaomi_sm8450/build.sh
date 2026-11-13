@@ -141,8 +141,17 @@ build_modules() {
             mv "$ko_path" out
             echo_i "Copied to out/$name.ko"
         else
-            echo_e "Unable to locate $name module!"
+            echo_e "Required module $name.ko was not produced; aborting build."
+            exit 1
         fi
+    done
+
+    for required_module in kernelsu nomount; do
+        if [ ! -s "out/$required_module.ko" ]; then
+            echo_e "Required output out/$required_module.ko is missing or empty!"
+            exit 1
+        fi
+        echo_i "Validated out/$required_module.ko"
     done
 
     echo_i "Building techpack modules..."
