@@ -145,6 +145,7 @@ jobs:
             kernel_platform/xiaomi/sm8450/out/kernelsu.ko
             kernel_platform/xiaomi/sm8450/out/nomount.ko
             build-info.txt
+            resolved-manifest.xml
           if-no-files-found: error
           compression-level: 9
           retention-days: 14
