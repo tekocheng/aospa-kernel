@@ -65,10 +65,7 @@ runs:
           beryl|vauxite) ;;
           *) echo "Unsupported source branch: $SOURCE_BRANCH" >&2; exit 1 ;;
         esac
-        sed -i -E \\
-          "s|(name=\"aospa-shadedark/android_kernel_xiaomi_sm8450\" path=\"kernel_platform/xiaomi/sm8450\" revision=\")[^\"]+(\")|\\1${SOURCE_BRANCH}\\2|; \\
-           s|(name=\"aospa-shadedark/android_device_xiaomi_marble-kernel\" path=\"device/xiaomi/marble-kernel\" revision=\")[^\"]+(\")|\\1${SOURCE_BRANCH}\\2|" \\
-          manifest.xml
+        sed -i "s/revision=\"beryl\"/revision=\"${SOURCE_BRANCH}\"/g" manifest.xml
         repo init -u https://github.com/tekocheng/aospa-kernel -b main -m manifest.xml --depth=1
         repo sync --fail-fast -j8
         test -d kernel_platform/xiaomi/sm8450
