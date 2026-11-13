@@ -135,7 +135,7 @@ build_modules() {
     m INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
     modules_out="out/modules/lib/modules/$(ls -t out/modules/lib/modules/ | head -n1)"
 
-    for name in kernelsu nomount; do
+    for name in kernelsu; do
         ko_path="$(find $modules_out -name "$name.ko" -print -quit)"
         if [ -n "$ko_path" ]; then
             mv "$ko_path" out
@@ -146,7 +146,7 @@ build_modules() {
         fi
     done
 
-    for required_module in kernelsu nomount; do
+    for required_module in kernelsu; do
         if [ ! -s "out/$required_module.ko" ]; then
             echo_e "Required output out/$required_module.ko is missing or empty!"
             exit 1
@@ -262,8 +262,7 @@ m ./scripts/kconfig/merge_config.sh $DEFCONFIGS vendor/${TARGET}_GKI.config
 scripts/config --file out/.config \
     --set-str LOCALVERSION "-${KERNEL_NAME}$(get_trees_rev)" \
     -d LOCALVERSION_AUTO \
-    -m CONFIG_KSU \
-    -m CONFIG_NOMOUNT
+    -m CONFIG_KSU
 $NO_LTO && {
     scripts/config --file out/.config \
         --set-str LOCALVERSION "-${KERNEL_NAME}-nolto$(get_trees_rev)" \
