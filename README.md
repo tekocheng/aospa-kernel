@@ -8,10 +8,11 @@ This repository is intentionally LKM-only. It does not build or package a kernel
 
 ## KernelSU variants
 
-Run **Actions → KernelSU LKM → Run workflow**, then select one variant:
+Run **Actions → KernelSU LKM → Run workflow**, then select one variant. **KernelSU-Official is the default**; the other four are optional alternatives:
 
 | Workflow choice | Upstream repository | Tracked branch | Build output |
 | --- | --- | --- | --- |
+| `KernelSU-Official` **(default)** | [tiann/KernelSU](https://github.com/tiann/KernelSU) | `main` | `kernelsu.ko` |
 | `KOWX712` | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | `master` | `kernelsu.ko` |
 | `BakaSU` | [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) | `main` | `kernelsu.ko` |
 | `SukiSU-Ultra` | [SukiSU-Ultra/SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra) | `main` | `kernelsu.ko` |
@@ -76,7 +77,7 @@ The workflow validates that `out/kernelsu.ko` exists and is non-empty before upl
 - An LKM is built against the kernel source and configuration synchronized during that workflow run. It is not a universal module.
 - The workflow does not build the matching kernel Image. Use a compatible AOSPA marble kernel separately.
 - Compare `build-info.txt` and `resolved-manifest.xml` with the kernel build you intend to use. If the kernel source, configuration, symbol versions, or relevant toolchain differ, rebuild the LKM against the matching source state.
-- The four variants are alternatives, not add-ons to install together.
+- The five variants are alternatives, not add-ons to install together.
 - This repository builds only the selected KernelSU LKM artifact; it does not package manager APKs or flashable ZIPs.
 
 ## Updating variants
@@ -97,7 +98,7 @@ Do not automatically follow upstream branches in production builds: a branch upd
 ## Credits
 
 - AOSPA ShadeDark kernel and build infrastructure contributors.
-- The maintainers of [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU), [BakaSU](https://github.com/Baka-SU/BakaSU), [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra), and [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next).
+- The maintainers of [KernelSU Official](https://github.com/tiann/KernelSU), [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU), [BakaSU](https://github.com/Baka-SU/BakaSU), [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra), and [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next).
 
 ## Disclaimer
 
