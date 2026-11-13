@@ -48,7 +48,7 @@ revision() {
 } > "$INFO"
 
 if command -v repo >/dev/null 2>&1 && [ -d "$ROOT/.repo" ]; then
-  repo -C "$ROOT" manifest -r -o "$ROOT/resolved-manifest.xml"
+  (cd "$ROOT" && repo manifest -r -o "$ROOT/resolved-manifest.xml")
   echo "Wrote $ROOT/resolved-manifest.xml"
 fi
 
