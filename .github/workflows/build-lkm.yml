@@ -92,7 +92,6 @@ jobs:
             -o /tmp/ksu-setup.sh
           bash /tmp/ksu-setup.sh "${KSU_REF}"
           test -d KernelSU/kernel -o -d KernelSU-Next/kernel
-          test -L drivers/kernelsu -o -L common/drivers/kernelsu
           echo "Selected ${KSU_REPO} @ ${KSU_REF}"
 
       - name: Build KernelSU LKM
