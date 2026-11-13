@@ -9,7 +9,7 @@ inputs:
   source-branch:
     description: AOSPA Marble kernel and device source branch
     required: false
-    default: beryl
+    default: uvite
 
 runs:
   using: composite
@@ -62,10 +62,10 @@ runs:
       run: |
         set -euo pipefail
         case "$SOURCE_BRANCH" in
-          beryl|vauxite) ;;
+          uvite|beryl|vauxite) ;;
           *) echo "Unsupported source branch: $SOURCE_BRANCH" >&2; exit 1 ;;
         esac
-        sed -i "s/revision=\"beryl\"/revision=\"${SOURCE_BRANCH}\"/g" manifest.xml
+        sed -i -E "s/revision=\"(uvite|beryl|vauxite)\"/revision=\"${SOURCE_BRANCH}\"/g" manifest.xml
         repo init -u https://github.com/tekocheng/aospa-kernel -b main -m manifest.xml --depth=1
         repo sync --fail-fast -j8
         test -d kernel_platform/xiaomi/sm8450
