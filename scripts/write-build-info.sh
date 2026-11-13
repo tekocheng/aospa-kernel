@@ -26,8 +26,9 @@ revision() {
   echo "Runner: ${RUNNER_OS:-unknown}"
   echo "Build UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo "Clang: ${CLANG_DIR:-unknown}"
+  echo "KernelSU variant: ${KSU_VARIANT:-unknown}"
+  echo "KernelSU repository: ${KSU_REPO:-unknown}"
   echo "KernelSU ref: ${KSU_REF:-unknown}"
-  echo "NoMount ref: ${NOMOUNT_REF:-not included}"
   echo
   echo "Manifest repository: $(revision "$ROOT/.repo/manifests")"
   echo
@@ -41,7 +42,7 @@ revision() {
   echo "Kernel configuration"
   echo "--------------------"
   if [ -f "$KERNEL_TREE/out/.config" ]; then
-    grep -E '^(CONFIG_KSU|CONFIG_NOMOUNT|CONFIG_LTO_CLANG_FULL|CONFIG_LTO_NONE)=' "$KERNEL_TREE/out/.config" || true
+    grep -E '^(CONFIG_KSU|CONFIG_LTO_CLANG_FULL|CONFIG_LTO_NONE)=' "$KERNEL_TREE/out/.config" || true
   else
     echo "out/.config not found"
   fi
