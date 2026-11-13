@@ -29,6 +29,8 @@ revision() {
   echo "KernelSU ref: ${KSU_REF:-unknown}"
   echo "NoMount ref: ${NOMOUNT_REF:-not included}"
   echo
+  echo "Manifest repository: $(revision "$ROOT/.repo/manifests")"
+  echo
   echo "Synced source revisions"
   echo "-----------------------"
   echo "Kernel: $(revision "$KERNEL_TREE")"
@@ -44,6 +46,11 @@ revision() {
     echo "out/.config not found"
   fi
 } > "$INFO"
+
+if command -v repo >/dev/null 2>&1 && [ -d "$ROOT/.repo" ]; then
+  repo -C "$ROOT" manifest -r -o "$ROOT/resolved-manifest.xml"
+  echo "Wrote $ROOT/resolved-manifest.xml"
+fi
 
 echo "Wrote $INFO"
 cat "$INFO"
