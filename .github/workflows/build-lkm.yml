@@ -87,6 +87,14 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
+
+          # AOSPA source may already contain a detached/stale KernelSU checkout.
+          # The upstream setup script reuses any existing directory and then runs
+          # git pull, which fails when that checkout has no attached branch.
+          if [[ "${KSU_REPO}" == "tiann/KernelSU" ]]; then
+            rm -rf KernelSU
+          fi
+
           curl --fail --location --retry 5 --retry-all-errors \
             "https://raw.githubusercontent.com/${KSU_REPO}/${KSU_REF}/kernel/setup.sh" \
             -o /tmp/ksu-setup.sh
