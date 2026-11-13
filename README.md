@@ -3,48 +3,49 @@
 [![Kernel Image](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-image.yml/badge.svg?branch=main)](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-image.yml)
 [![KernelSU LKM](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml/badge.svg?branch=main)](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml)
 
-A GitHub Actions build environment for the **AOSPA kernel targeting Xiaomi marble** (Poco F5 / Redmi Note 12 Turbo).
+GitHub Actions build environment for the **AOSPA kernel targeting Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
 
-This project focuses on **KernelSU in LKM mode**. The kernel image and KernelSU module are built as separate artifacts so the LKM can be installed independently of the kernel image.
+This project uses **KernelSU in LKM mode**. The raw kernel image and KernelSU LKM modules are built in separate workflows. The LKM must be used with a compatible kernel built from the matching source revisions.
 
-## Highlights
+## Features
 
-- AOSPA kernel source and build layout for the **marble** target.
-- KernelSU from the official [tiann/KernelSU](https://github.com/tiann/KernelSU) repository, configured as a loadable kernel module.
-- Separate workflows for the kernel image and KernelSU LKM.
-- [NoMount](https://github.com/maxsteeel/nomount) built as an additional companion module.
-- Clang toolchain `clang-r596125`.
-- Repo-based source synchronization using the project's [manifest.xml](manifest.xml).
-- GitHub Actions disk-space cleanup, swap setup, and Clang caching.
+- AOSPA kernel source synchronized through Repo and the project's manifest.
+- KernelSU configured as a loadable module (`CONFIG_KSU=m`).
+- Separate manual workflows for the kernel image and LKM modules.
+- NoMount built as a companion LKM in the module workflow.
+- Clang toolchain `clang-r596125`, with GitHub Actions caching.
+- Build metadata recording source revisions, toolchain, workflow run, and relevant kernel configuration.
+- Required artifact checks to prevent missing or empty Image / LKM files from being uploaded as successful builds.
+- Runner disk cleanup, swap setup, explicit job timeouts, and limited workflow permissions.
 
-> **Scope:** The GitHub Actions workflows are wired for `marble`. Although the build script contains another target case, that does not mean the other device is supported by these workflows.
+> **Device scope:** The GitHub Actions workflows are configured for `marble`. The local build script contains a `cupid` target case, but these workflows do not currently provide a complete Cupid build configuration.
 
-## Build workflows
+## Workflows and artifacts
 
-Both workflows are started manually with `workflow_dispatch`. They run on GitHub-hosted `ubuntu-22.04` runners.
+Both workflows are started manually through the **Actions** tab and run on GitHub-hosted Ubuntu 22.04.
 
-| Workflow | What it builds | Artifact | Files |
+| Workflow | Build mode | Artifact | Contents |
 | --- | --- | --- | --- |
-| **Kernel Image** | Kernel image only (`--only-kernel`) | `kernel-image` | `Image` |
-| **KernelSU LKM Module** | Kernel modules (`--only-modules`) | `ksu-lkm-module` | `kernelsu.ko`, `nomount.ko` |
+| Kernel Image | `./build.sh marble --only-kernel` | `kernel-image` | Raw `Image` + `build-info.txt` |
+| KernelSU LKM Module | `./build.sh marble --only-modules` | `ksu-lkm-module` | `kernelsu.ko`, `nomount.ko` + `build-info.txt` |
 
 ### Run a build
 
-1. Open the repository's **Actions** tab.
-2. Select **Kernel Image** and click **Run workflow**.
-3. Select **KernelSU LKM Module** and click **Run workflow**.
-4. Open each completed run and download its artifact from the **Artifacts** section.
+1. Open **Actions** in the repository.
+2. Select **Kernel Image**, then click **Run workflow**.
+3. Select **KernelSU LKM Module**, then click **Run workflow**.
+4. Download the artifacts from their respective completed workflow runs.
+5. Keep the two `build-info.txt` files and compare their source revisions before using the modules with the kernel.
 
-The two workflows are intentionally separate. The image workflow produces a raw kernel `Image`; it does **not** package a `boot.img`, AnyKernel3 ZIP, or flashable installer. The LKM workflow produces the two `.ko` files listed above.
+The image workflow produces a raw kernel `Image`. It does **not** create a `boot.img`, AnyKernel3 ZIP, or flashable installer. The module workflow produces standalone `.ko` files; it does not package a KernelSU manager APK or a flashable module ZIP.
 
-For a matching setup, use artifacts built from compatible source revisions and the same manifest state. The workflows synchronize their sources independently, so upstream branches can move between separate runs.
+**Important:** Both workflows synchronize their source trees independently. If upstream branches move between runs, the kernel and LKM builds may use different source revisions. Always compare the metadata and rebuild both artifacts when the relevant kernel source or configuration differs.
 
 ## Source layout
 
 ```text
 .
 ├── .github/
-│   ├── dependabot.yml
 │   └── workflows/
 │       ├── build-image.yml
 │       ├── build-lkm.yml
@@ -53,67 +54,82 @@ For a matching setup, use artifacts built from compatible source revisions and t
 │   ├── build.sh
 │   └── scripts/
 │       └── setlocalversion
+├── scripts/
+│   └── write-build-info.sh
 ├── manifest.xml
 └── README.md
 ```
 
-The manifest assembles the AOSPA kernel build environment, including the kernel source, kernel build tools, device trees, and vendor modules. The local `android_kernel_xiaomi_sm8450/` directory provides the project-specific build script and `setlocalversion` override copied into the synchronized kernel tree by the workflows.
+The manifest assembles the kernel source, build tools, device trees, vendor modules, and supporting build projects. The local `android_kernel_xiaomi_sm8450/` directory contains the project-specific build script and `setlocalversion` override copied into the synchronized kernel tree.
 
-## Build script
+## Build script options
 
-The build script expects to run from the kernel source directory and requires a valid `.build.rc` containing `SRC_ROOT=<path-to-AOSPA-source>`. The GitHub Actions workflows create this file automatically.
-
-Available modes:
+The script runs from the synchronized kernel source directory and requires `.build.rc` containing `SRC_ROOT=<path-to-AOSPA-source>`. The GitHub Actions workflows create this file automatically.
 
 | Command | Purpose |
 | --- | --- |
-| `./build.sh marble --only-kernel` | Build the kernel image |
-| `./build.sh marble --only-modules` | Build kernel modules and stage module outputs |
+| `./build.sh marble --only-kernel` | Build and stage the kernel Image |
+| `./build.sh marble --only-modules` | Build kernel modules and stage vendor module outputs |
 | `./build.sh marble --only-dtb` | Build DTBs / DTBO |
-| `./build.sh marble --only-config` | Generate the kernel configuration only |
-| `./build.sh marble` | Run the full build: image, modules, and DTBs |
-| `./build.sh marble --no-lto` | Disable Clang Full LTO for the build |
-| `./build.sh marble --clean` | Clean the output directory before building |
+| `./build.sh marble --only-config` | Generate kernel configuration only |
+| `./build.sh marble` | Full build: Image, modules, and DTBs |
+| `./build.sh marble --no-lto` | Disable Clang Full LTO |
+| `./build.sh marble --clean` | Clean output directory and the local modules checkout |
 
-The workflow currently uses only the image-only and modules-only modes.
+The Actions workflows currently use only the image-only and modules-only modes.
 
-## KernelSU and module notes
+## KernelSU and NoMount
 
-- KernelSU is configured with `CONFIG_KSU=m`; the LKM is delivered separately as `kernelsu.ko`.
-- `nomount.ko` is a separate companion module. It is not the KernelSU manager or a replacement for KernelSU.
-- The LKM must match the kernel it is intended to run with. Use the matching build outputs and follow the installation procedure supported by your KernelSU manager and device setup.
-- This repository does **not** currently integrate SUSFS. The previous README mentioned SUSFS as broken, but the current workflows do not fetch or apply SUSFS patches.
-- No Magisk integration or flashable ZIP packaging is configured here.
+- KernelSU is configured as `CONFIG_KSU=m` and delivered as `kernelsu.ko`.
+- NoMount is configured as a separate module and delivered as `nomount.ko`.
+- KernelSU is pinned to commit `dbb73665d103da40c7ecbd21ba3b5ac76eb95784` in both workflows.
+- NoMount is pinned to commit `bf1847f98fed382369c43bfd652cd93774b9b8e3` in the LKM workflow.
+- The build script now stops if either required module is missing or empty.
+- The modules must match the kernel build they are intended to run with. Do not assume an LKM from an unrelated kernel build is compatible.
+
+This repository does **not** currently integrate SUSFS. It also does not configure Magisk integration or flashable ZIP packaging.
+
+## Reproducibility and build metadata
+
+Each artifact includes `build-info.txt`, which records:
+
+- Device target and build type.
+- Workflow name, run ID, attempt, and builder commit.
+- Clang toolchain directory and pinned KernelSU / NoMount revisions.
+- Git revisions for the kernel, build tools, device trees, and vendor modules.
+- Relevant options from the generated kernel `.config`.
+
+KernelSU and NoMount are pinned so their setup scripts do not silently follow a moving branch. The AOSPA manifest is still initialized from its upstream `main` branch; the recorded component revisions provide a trace of what Repo synchronized for each run.
+
+The Clang cache is keyed by runner OS and toolchain directory. Build jobs have a six-hour timeout, use Bash strict mode in setup/build steps, and fail artifact upload when expected files are absent.
 
 ## Cleanup workflow
 
-The **Cleanup Workflow Runs** workflow can be started manually from the Actions tab. It supports:
+**Cleanup Workflow Runs** can be started manually from Actions.
 
 - `keep`: number of newest completed workflow runs to retain (default: `3`).
 - `mode=all-finished`: delete completed runs beyond the retention window.
-- `mode=failed-only`: delete failed or non-success completed runs beyond the retention window, while skipping successful runs.
+- `mode=failed-only`: delete failed or non-success completed runs beyond the retention window while preserving successful runs.
 
-This workflow deletes GitHub Actions run history; it does not delete source code, releases, or build artifacts independently.
+This workflow deletes GitHub Actions run history. It does not delete source code or releases.
 
-## Maintainer notes
+## Further improvement opportunities
 
-A few improvements would make builds more reproducible and easier to debug:
+The workflows are more reproducible and validate their key outputs, but a few changes should be approached separately and tested before adoption:
 
-1. **Pin KernelSU to a commit SHA.** The workflows currently install from the moving `main` branch. Pinning a revision ensures the image and LKM builds use the same KernelSU source.
-2. **Fail when required modules are missing.** The build script currently prints an error if `kernelsu.ko` or `nomount.ko` cannot be found, but it does not explicitly stop the build at that point. A strict check before artifact upload would prevent incomplete artifacts from looking like successful builds.
-3. **Share common workflow setup.** The two build workflows repeat most environment, Repo, and Clang setup steps. A reusable workflow or composite action could reduce duplication.
-4. **Align the Python versions.** The image and LKM workflows currently request slightly different Python versions.
-5. **Pin manifest revisions for release builds.** The manifest currently tracks named branches for several projects. Recording exact revisions for release builds would improve traceability.
-
-These are recommendations only; the workflows have not been changed as part of this README update.
+1. Pin the AOSPA manifest repository itself to a reviewed commit or release tag, rather than tracking `main`.
+2. Consider extracting the duplicated environment setup into a reusable workflow or composite action once the current build path is stable.
+3. Add a controlled build matrix only when another device has a verified manifest, defconfig, DTB selection, and artifact layout.
+4. Add a test build on a self-hosted runner or a dedicated validation branch before changing the compiler, LTO mode, or build flags.
 
 ## Credits
 
 - AOSPA ShadeDark kernel and build infrastructure contributors.
-- [KernelSU](https://github.com/tiann/KernelSU) by its upstream maintainers.
-- [NoMount](https://github.com/maxsteeel/nomount) by its upstream maintainers.
-- The local build script retains the original copyright notice in the source file.
+- [KernelSU](https://github.com/tiann/KernelSU) upstream maintainers.
+- [NoMount](https://github.com/maxsteeel/nomount) upstream maintainers.
+
+The local build script retains its original copyright notice.
 
 ## Disclaimer
 
-This project is provided for development and testing. Kernel builds, modules, and installation procedures can cause boot failures or data loss when used with an incompatible device, kernel, or ROM. Verify the target and keep a known-good recovery path before flashing or loading modules.
+For development and testing. An incompatible kernel image or module can cause boot failure or data loss. Verify the device target, keep a known-good recovery path, and make a backup before flashing or loading modules.
