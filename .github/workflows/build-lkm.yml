@@ -1,23 +1,33 @@
-name: KernelSU LKM Module
+name: KernelSU LKM
 
 on:
   workflow_dispatch:
+    inputs:
+      ksu_variant:
+        description: KernelSU variant to build as LKM
+        required: true
+        type: choice
+        default: KOWX712
+        options:
+          - KOWX712
+          - BakaSU
+          - SukiSU-Ultra
+          - KernelSU-Next
 
 permissions:
   contents: read
 
 concurrency:
-  group: aospa-marble-kernelsu-lkm
+  group: aospa-marble-kernelsu-lkm-${{ inputs.ksu_variant }}
   cancel-in-progress: false
 
 env:
   CLANG_DIR: clang-r596125
-  KSU_REF: dbb73665d103da40c7ecbd21ba3b5ac76eb95784
-  NOMOUNT_REF: bf1847f98fed382369c43bfd652cd93774b9b8e3
   BUILD_TYPE: kernelsu-lkm
 
 jobs:
-  build-ksu-lkm-module:
+  build-ksu-lkm:
+    name: Build ${{ inputs.ksu_variant }} LKM
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
@@ -29,49 +39,86 @@ jobs:
         with:
           clang-dir: ${{ env.CLANG_DIR }}
 
-      - name: Include pinned KernelSU
+      - name: Resolve KernelSU variant
+        id: ksu
         shell: bash
+        env:
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+        run: |
+          set -euo pipefail
+          case "$KSU_VARIANT" in
+            KOWX712)
+              echo "repo=KOWX712/KernelSU" >> "$GITHUB_OUTPUT"
+              echo "branch=master" >> "$GITHUB_OUTPUT"
+              echo "ref=21787ce135c988bae4244a44cfcb5a542aa3347f" >> "$GITHUB_OUTPUT"
+              ;;
+            BakaSU)
+              echo "repo=Baka-SU/BakaSU" >> "$GITHUB_OUTPUT"
+              echo "branch=main" >> "$GITHUB_OUTPUT"
+              echo "ref=548d1dda060ca198823d8808804d01f5209ef4a9" >> "$GITHUB_OUTPUT"
+              ;;
+            SukiSU-Ultra)
+              echo "repo=SukiSU-Ultra/SukiSU-Ultra" >> "$GITHUB_OUTPUT"
+              echo "branch=main" >> "$GITHUB_OUTPUT"
+              echo "ref=dae36db016079546b9fc028636a3326d09979777" >> "$GITHUB_OUTPUT"
+              ;;
+            KernelSU-Next)
+              echo "repo=KernelSU-Next/KernelSU-Next" >> "$GITHUB_OUTPUT"
+              echo "branch=dev" >> "$GITHUB_OUTPUT"
+              echo "ref=3987e4d5de21348050b923e7d7a6540ddc2d5c8c" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported KernelSU variant: $KSU_VARIANT" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Include selected KernelSU variant
+        shell: bash
+        env:
+          KSU_REPO: ${{ steps.ksu.outputs.repo }}
+          KSU_REF: ${{ steps.ksu.outputs.ref }}
         run: |
           set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
           curl --fail --location --retry 5 --retry-all-errors \
-            "https://raw.githubusercontent.com/tiann/KernelSU/${KSU_REF}/kernel/setup.sh" \
-            | bash -s "${KSU_REF}"
-          test -d KernelSU/kernel
+            "https://raw.githubusercontent.com/${KSU_REPO}/${KSU_REF}/kernel/setup.sh" \
+            -o /tmp/ksu-setup.sh
+          bash /tmp/ksu-setup.sh "${KSU_REF}"
+          test -d KernelSU/kernel -o -d KernelSU-Next/kernel
+          echo "Selected ${KSU_REPO} @ ${KSU_REF}"
 
-      - name: Include pinned NoMount
+      - name: Build KernelSU LKM
         shell: bash
-        run: |
-          set -euo pipefail
-          cd kernel_platform/xiaomi/sm8450
-          curl --fail --location --retry 5 --retry-all-errors \
-            "https://raw.githubusercontent.com/maxsteeel/nomount/${NOMOUNT_REF}/kernel/setup.sh" \
-            | bash -s "${NOMOUNT_REF}"
-
-      - name: Build KernelSU LKM modules
-        shell: bash
+        env:
+          KSU_REPO: ${{ steps.ksu.outputs.repo }}
+          KSU_REF: ${{ steps.ksu.outputs.ref }}
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
         run: |
           set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
           export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
           ./build.sh marble --only-modules
           test -s out/kernelsu.ko
-          test -s out/nomount.ko
-          file out/kernelsu.ko out/nomount.ko
+          file out/kernelsu.ko
 
       - name: Generate build metadata
         shell: bash
+        env:
+          KSU_REPO: ${{ steps.ksu.outputs.repo }}
+          KSU_REF: ${{ steps.ksu.outputs.ref }}
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
         run: |
           set -euo pipefail
           bash scripts/write-build-info.sh
+          grep -q "KernelSU ref: ${KSU_REF}" build-info.txt
 
-      - name: Upload KernelSU LKM artifacts
+      - name: Upload KernelSU LKM artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ksu-lkm-module
+          name: kernelsu-lkm-${{ inputs.ksu_variant }}
           path: |
             kernel_platform/xiaomi/sm8450/out/kernelsu.ko
-            kernel_platform/xiaomi/sm8450/out/nomount.ko
             build-info.txt
             resolved-manifest.xml
           if-no-files-found: error
