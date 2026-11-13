@@ -1,11 +1,25 @@
 name: KernelSU LKM Module
+
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aospa-marble-kernelsu-lkm
+  cancel-in-progress: false
+
 env:
   CLANG_DIR: clang-r596125
+  KSU_REF: dbb73665d103da40c7ecbd21ba3b5ac76eb95784
+  NOMOUNT_REF: bf1847f98fed382369c43bfd652cd93774b9b8e3
+  BUILD_TYPE: kernelsu-lkm
+
 jobs:
   build-ksu-lkm-module:
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
     steps:
       - name: Free disk space
         uses: endersonmenezes/free-disk-space@main
@@ -21,73 +35,116 @@ jobs:
           rm_cmd: "rmz"
           rmz_version: "3.2.0"
           testing: false
+
       - name: Set swap space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 16
-      - name: Increase file limit
-        run: |
-          sudo sysctl -w vm.swappiness=100
-      - name: Check repository
+
+      - name: Tune memory pressure
+        run: sudo sysctl -w vm.swappiness=100
+
+      - name: Checkout builder
         uses: actions/checkout@v7.0.1
+
       - name: Setup Python
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: '3.15'
-      - name: Setup build environment
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y bc device-tree-compiler
-          sudo curl --create-dirs -o /usr/local/bin/repo -L https://storage.googleapis.com/git-repo-downloads/repo
-          sudo chmod a+rx /usr/local/bin/repo
-      - name: Clone repo and sync
+          sudo curl --fail --location --retry 5 --retry-all-errors \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            --output /usr/local/bin/repo
+          sudo chmod 0755 /usr/local/bin/repo
+          repo version
+
+      - name: Initialize and sync AOSPA sources
+        shell: bash
         run: |
+          set -euo pipefail
           repo init -u https://github.com/tekocheng/aospa-kernel -b main -m manifest.xml --depth=1
-          repo sync
+          repo sync --fail-fast -j8
+          test -d kernel_platform/xiaomi/sm8450
           cp -rvf android_kernel_xiaomi_sm8450/. kernel_platform/xiaomi/sm8450/
           sed -i 's/\r$//' kernel_platform/xiaomi/sm8450/scripts/setlocalversion
           mkdir -p device/xiaomi/marble-kernel/dtbs
-          echo "SRC_ROOT=$(pwd)" > kernel_platform/xiaomi/sm8450/.build.rc
-      - name: Cache Clang
+          printf 'SRC_ROOT=%s\n' "$PWD" > kernel_platform/xiaomi/sm8450/.build.rc
+
+      - name: Cache Clang toolchain
         uses: actions/cache@v6.1.0
         with:
           path: kernel_platform/clang
-          key: clang-r596125
+          key: ${{ runner.os }}-clang-${{ env.CLANG_DIR }}
+          restore-keys: |
+            ${{ runner.os }}-clang-${{ env.CLANG_DIR }}-
+
       - name: Setup Clang
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p kernel_platform/clang
           cd kernel_platform/clang
-          if [ ! -d "${CLANG_DIR}" ]; then
-            echo "Clang not found in cache. Downloading..."
+          if [ ! -x "${CLANG_DIR}/bin/clang" ]; then
+            echo "Clang cache miss; fetching ${CLANG_DIR}"
             git clone -n --depth=1 --filter=tree:0 -b main-kernel --single-branch \
               https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 .
             git sparse-checkout init --cone
-            git sparse-checkout set ${CLANG_DIR}
+            git sparse-checkout set "${CLANG_DIR}"
             git checkout
-          else
-            echo "Using cached ${CLANG_DIR}"
           fi
-      - name: Include KernelSU
+          test -x "${CLANG_DIR}/bin/clang"
+          "${CLANG_DIR}/bin/clang" --version
+
+      - name: Include pinned KernelSU
+        shell: bash
         run: |
+          set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
-          rm -rf KernelSU
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-      - name: Include NoMount
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/tiann/KernelSU/${KSU_REF}/kernel/setup.sh" \
+            | bash -s "${KSU_REF}"
+          test -d KernelSU/kernel
+
+      - name: Include pinned NoMount
+        shell: bash
         run: |
+          set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
-          NM=bf1847f98fed382369c43bfd652cd93774b9b8e3
-          curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/$NM/kernel/setup.sh" | bash -s $NM
-      - name: Build LKM module
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/maxsteeel/nomount/${NOMOUNT_REF}/kernel/setup.sh" \
+            | bash -s "${NOMOUNT_REF}"
+
+      - name: Build KernelSU LKM modules
+        shell: bash
         run: |
+          set -euo pipefail
           cd kernel_platform/xiaomi/sm8450
           export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
           ./build.sh marble --only-modules
-      - name: Upload LKM module artifact
+          test -s out/kernelsu.ko
+          test -s out/nomount.ko
+          file out/kernelsu.ko out/nomount.ko
+
+      - name: Generate build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/write-build-info.sh
+
+      - name: Upload KernelSU LKM artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
           name: ksu-lkm-module
           path: |
             kernel_platform/xiaomi/sm8450/out/kernelsu.ko
             kernel_platform/xiaomi/sm8450/out/nomount.ko
+            build-info.txt
+          if-no-files-found: error
           compression-level: 9
-          
+          retention-days: 14
