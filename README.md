@@ -8,7 +8,7 @@ This repository is intentionally LKM-only. It does not build or package a kernel
 
 ## KernelSU variants
 
-Run **Actions → KernelSU LKM → Run workflow**, select the AOSPA source branch (`beryl` or `vauxite`), then select one KernelSU variant. **KernelSU-Official is the default**; the other four are optional alternatives:
+Run **Actions → KernelSU LKM → Run workflow**, select the AOSPA source branch (`uvite` by default, `beryl`, or `vauxite`), then select one KernelSU variant. **KernelSU-Official is the default**; the other four are optional alternatives:
 
 | Workflow choice | Upstream repository | Tracked branch | Build output |
 | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ Both modules are required outputs. The job fails when either module is absent, e
 2. Select **KernelSU LKM**.
 3. Click **Run workflow**.
 4. Choose `beryl` or `vauxite` as the AOSPA source branch.
-5. Choose the desired KernelSU variant.
+6. Choose the desired KernelSU variant.
 5. Wait for the job to finish and download its artifact.
 
 The artifact name includes the selected variant, for example `kernelsu-lkm-KOWX712`.
@@ -50,8 +50,8 @@ Each artifact contains:
 
 - Device target: `marble`.
 - Manifest: [tekocheng/aospa-kernel](https://github.com/tekocheng/aospa-kernel).
-- Kernel source: [aospa-shadedark/android_kernel_xiaomi_sm8450](https://github.com/aospa-shadedark/android_kernel_xiaomi_sm8450), selectable branch `beryl` or `vauxite`.
-- Marble device kernel tree: [aospa-shadedark/android_device_xiaomi_marble-kernel](https://github.com/aospa-shadedark/android_device_xiaomi_marble-kernel), synced on the same selected branch.
+- Kernel source: [aospa-shadedark/android_kernel_xiaomi_sm8450](https://github.com/aospa-shadedark/android_kernel_xiaomi_sm8450), selectable branch `uvite` (default), `beryl`, or `vauxite`.
+- Marble device kernel tree: [aospa-shadedark/android_device_xiaomi_marble-kernel](https://github.com/aospa-shadedark/android_device_xiaomi_marble-kernel), synced on the same selected branch (`uvite`, `beryl`, or `vauxite`).
 - Runner: GitHub-hosted Ubuntu 22.04.
 - Compiler: Clang `clang-r596125`.
 - Python: `3.12`.
