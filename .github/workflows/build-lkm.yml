@@ -7,9 +7,9 @@ on:
         description: AOSPA Marble kernel and device source branch
         required: true
         type: choice
-        default: uvite
+        default: calcite
         options:
-          - uvite
+          - calcite
           - beryl
           - vauxite
       ksu_variant:
