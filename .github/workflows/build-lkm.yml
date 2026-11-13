@@ -24,6 +24,8 @@ concurrency:
 
 env:
   CLANG_DIR: clang-r596125
+  NOMOUNT_REPO: maxsteeel/nomount
+  NOMOUNT_REF: bf1847f98fed382369c43bfd652cd93774b9b8e3
   BUILD_TYPE: kernelsu-lkm
 
 jobs:
@@ -102,7 +104,16 @@ jobs:
           test -d KernelSU/kernel -o -d KernelSU-Next/kernel
           echo "Selected ${KSU_REPO} @ ${KSU_REF}"
 
-      - name: Build KernelSU LKM
+      - name: Include pinned NoMount
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel_platform/xiaomi/sm8450
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/${NOMOUNT_REPO}/${NOMOUNT_REF}/kernel/setup.sh" \
+            | bash -s "${NOMOUNT_REF}"
+
+      - name: Build KernelSU and NoMount LKM
         shell: bash
         env:
           KSU_REPO: ${{ steps.ksu.outputs.repo }}
@@ -113,8 +124,60 @@ jobs:
           cd kernel_platform/xiaomi/sm8450
           export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
           ./build.sh marble --only-modules
+          grep -q '^CONFIG_KSU=m
+
+      - name: Generate build metadata
+        shell: bash
+        env:
+          KSU_REPO: ${{ steps.ksu.outputs.repo }}
+          KSU_REF: ${{ steps.ksu.outputs.ref }}
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+        run: |
+          set -euo pipefail
+          bash scripts/write-build-info.sh
+          grep -q "KernelSU ref: ${KSU_REF}" build-info.txt
+
+      - name: Upload KernelSU LKM artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kernelsu-lkm-${{ inputs.ksu_variant }}
+          path: |
+            kernel_platform/xiaomi/sm8450/out/kernelsu.ko
+            kernel_platform/xiaomi/sm8450/out/nomount.ko
+            build-info.txt
+            resolved-manifest.xml
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 14
+ out/.config
+          grep -q '^CONFIG_NOMOUNT=m
+
+      - name: Generate build metadata
+        shell: bash
+        env:
+          KSU_REPO: ${{ steps.ksu.outputs.repo }}
+          KSU_REF: ${{ steps.ksu.outputs.ref }}
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+        run: |
+          set -euo pipefail
+          bash scripts/write-build-info.sh
+          grep -q "KernelSU ref: ${KSU_REF}" build-info.txt
+
+      - name: Upload KernelSU LKM artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kernelsu-lkm-${{ inputs.ksu_variant }}
+          path: |
+            kernel_platform/xiaomi/sm8450/out/kernelsu.ko
+            build-info.txt
+            resolved-manifest.xml
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 14
+ out/.config
           test -s out/kernelsu.ko
-          file out/kernelsu.ko
+          test -s out/nomount.ko
+          file out/kernelsu.ko out/nomount.ko
 
       - name: Generate build metadata
         shell: bash
