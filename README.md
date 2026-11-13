@@ -2,7 +2,7 @@
 
 [![KernelSU LKM](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml/badge.svg?branch=main)](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml)
 
-A GitHub Actions builder for **KernelSU Loadable Kernel Modules (LKM)** on the AOSPA kernel for **Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
+A GitHub Actions builder for **KernelSU and NoMount Loadable Kernel Modules (LKM)** on the AOSPA kernel for **Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
 
 This repository is intentionally LKM-only. It does not build or package a kernel Image, boot.img, AnyKernel3 ZIP, or flashable kernel installer.
 
@@ -22,6 +22,12 @@ Each choice is mapped to a reviewed commit SHA in the workflow. The setup script
 
 > These are alternative KernelSU implementations. Build and use only one variant at a time; do not mix their kernel modules or manager applications.
 
+## NoMount companion LKM
+
+NoMount is built as a **companion LKM** in the same run as the selected KernelSU variant. It is not another KernelSU choice and does not replace KernelSU. The workflow pins [maxsteeel/nomount](https://github.com/maxsteeel/nomount) to commit `bf1847f98fed382369c43bfd652cd93774b9b8e3`, applies its kernel setup, enables `CONFIG_NOMOUNT=m`, and produces `nomount.ko` alongside `kernelsu.ko`.
+
+Both modules are required outputs. The job fails when either module is absent, empty, or its expected kernel configuration is not enabled.
+
 ## Run a build
 
 1. Open the repository's **Actions** tab.
@@ -35,6 +41,7 @@ The artifact name includes the selected variant, for example `kernelsu-lkm-KOWX7
 Each artifact contains:
 
 - `kernelsu.ko` — the selected KernelSU LKM.
+- `nomount.ko` — the pinned NoMount companion LKM.
 - `build-info.txt` — build type, selected variant, exact KernelSU commit, builder commit, toolchain, and source revisions.
 - `resolved-manifest.xml` — exact Repo project revisions synchronized for that run.
 
@@ -47,9 +54,10 @@ Each artifact contains:
 - Python: `3.12`.
 - Build mode: `./build.sh marble --only-modules`.
 - KernelSU config: `CONFIG_KSU=m`.
+- NoMount config: `CONFIG_NOMOUNT=m`.
 - Clang is cached between runs; common setup and Repo synchronization are maintained in a local composite action.
 
-The workflow validates that `out/kernelsu.ko` exists and is non-empty before uploading. A missing module causes the job to fail.
+The workflow validates that both `out/kernelsu.ko` and `out/nomount.ko` exist and are non-empty, and checks that both `CONFIG_KSU=m` and `CONFIG_NOMOUNT=m` are enabled before uploading. A missing module or disabled configuration causes the job to fail.
 
 ## Source layout
 
@@ -77,8 +85,8 @@ The workflow validates that `out/kernelsu.ko` exists and is non-empty before upl
 - An LKM is built against the kernel source and configuration synchronized during that workflow run. It is not a universal module.
 - The workflow does not build the matching kernel Image. Use a compatible AOSPA marble kernel separately.
 - Compare `build-info.txt` and `resolved-manifest.xml` with the kernel build you intend to use. If the kernel source, configuration, symbol versions, or relevant toolchain differ, rebuild the LKM against the matching source state.
-- The five variants are alternatives, not add-ons to install together.
-- This repository builds only the selected KernelSU LKM artifact; it does not package manager APKs or flashable ZIPs.
+- The five KernelSU variants are alternatives, not add-ons to install together. NoMount is built separately as the companion LKM for the selected variant.
+- This repository builds the selected KernelSU LKM and NoMount LKM; it does not package manager APKs or flashable ZIPs.
 
 ## Updating variants
 
@@ -99,6 +107,7 @@ Do not automatically follow upstream branches in production builds: a branch upd
 
 - AOSPA ShadeDark kernel and build infrastructure contributors.
 - The maintainers of [KernelSU Official](https://github.com/tiann/KernelSU), [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU), [BakaSU](https://github.com/Baka-SU/BakaSU), [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra), and [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next).
+- [NoMount](https://github.com/maxsteeel/nomount) upstream maintainers.
 
 ## Disclaimer
 
