@@ -7,8 +7,9 @@ on:
         description: KernelSU variant to build as LKM
         required: true
         type: choice
-        default: KOWX712
+        default: KernelSU-Official
         options:
+          - KernelSU-Official
           - KOWX712
           - BakaSU
           - SukiSU-Ultra
@@ -47,6 +48,11 @@ jobs:
         run: |
           set -euo pipefail
           case "$KSU_VARIANT" in
+            KernelSU-Official)
+              echo "repo=tiann/KernelSU" >> "$GITHUB_OUTPUT"
+              echo "branch=main" >> "$GITHUB_OUTPUT"
+              echo "ref=dbb73665d103da40c7ecbd21ba3b5ac76eb95784" >> "$GITHUB_OUTPUT"
+              ;;
             KOWX712)
               echo "repo=KOWX712/KernelSU" >> "$GITHUB_OUTPUT"
               echo "branch=master" >> "$GITHUB_OUTPUT"
@@ -86,6 +92,7 @@ jobs:
             -o /tmp/ksu-setup.sh
           bash /tmp/ksu-setup.sh "${KSU_REF}"
           test -d KernelSU/kernel -o -d KernelSU-Next/kernel
+          test -L drivers/kernelsu -o -L common/drivers/kernelsu
           echo "Selected ${KSU_REPO} @ ${KSU_REF}"
 
       - name: Build KernelSU LKM
