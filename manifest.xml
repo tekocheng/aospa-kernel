@@ -7,7 +7,8 @@
   <default remote="clo" revision="kernel.build.lnx.1.0" sync-j="8"/>
   <project name="aospa-shadedark/android_kernel_build" path="kernel_platform/build" revision="uvite-xiaomi-sm8450" remote="github"/>
   <project name="aospa-shadedark/android_kernel_prebuilts_build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="uvite-xiaomi-sm8450" remote="github"/>
-  <project name="tekocheng/android_kernel_xiaomi_sm8450" path="kernel_platform/xiaomi/sm8450" revision="calcite" remote="github"/>
+  <project name="aospa-shadedark/android_kernel_xiaomi_sm8450" path="kernel_platform/xiaomi/sm8450" revision="beryl" remote="github"/>
+  <project name="aospa-shadedark/android_device_xiaomi_marble-kernel" path="device/xiaomi/marble-kernel" revision="beryl" remote="github"/>
   <project name="aospa-shadedark/android_kernel_xiaomi_sm8450-devicetrees" path="kernel_platform/xiaomi/sm8450-devicetrees" revision="calcite" remote="github"/>
   <project name="aospa-shadedark/android_kernel_xiaomi_sm8450-modules" path="kernel_platform/xiaomi/sm8450-modules" revision="calcite" remote="github"/>
   <project name="kernel_platform/external/dtc" revision="refs/heads/kernel.build.lnx.1.0.r1-rel"/>
