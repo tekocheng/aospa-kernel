@@ -124,57 +124,8 @@ jobs:
           cd kernel_platform/xiaomi/sm8450
           export PATH="$(realpath ../../clang/${CLANG_DIR}/bin):$PATH"
           ./build.sh marble --only-modules
-          grep -q '^CONFIG_KSU=m
-
-      - name: Generate build metadata
-        shell: bash
-        env:
-          KSU_REPO: ${{ steps.ksu.outputs.repo }}
-          KSU_REF: ${{ steps.ksu.outputs.ref }}
-          KSU_VARIANT: ${{ inputs.ksu_variant }}
-        run: |
-          set -euo pipefail
-          bash scripts/write-build-info.sh
-          grep -q "KernelSU ref: ${KSU_REF}" build-info.txt
-
-      - name: Upload KernelSU LKM artifact
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernelsu-lkm-${{ inputs.ksu_variant }}
-          path: |
-            kernel_platform/xiaomi/sm8450/out/kernelsu.ko
-            kernel_platform/xiaomi/sm8450/out/nomount.ko
-            build-info.txt
-            resolved-manifest.xml
-          if-no-files-found: error
-          compression-level: 9
-          retention-days: 14
- out/.config
-          grep -q '^CONFIG_NOMOUNT=m
-
-      - name: Generate build metadata
-        shell: bash
-        env:
-          KSU_REPO: ${{ steps.ksu.outputs.repo }}
-          KSU_REF: ${{ steps.ksu.outputs.ref }}
-          KSU_VARIANT: ${{ inputs.ksu_variant }}
-        run: |
-          set -euo pipefail
-          bash scripts/write-build-info.sh
-          grep -q "KernelSU ref: ${KSU_REF}" build-info.txt
-
-      - name: Upload KernelSU LKM artifact
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernelsu-lkm-${{ inputs.ksu_variant }}
-          path: |
-            kernel_platform/xiaomi/sm8450/out/kernelsu.ko
-            build-info.txt
-            resolved-manifest.xml
-          if-no-files-found: error
-          compression-level: 9
-          retention-days: 14
- out/.config
+          grep -q '^CONFIG_KSU=m$' out/.config
+          grep -q '^CONFIG_NOMOUNT=m$' out/.config
           test -s out/kernelsu.ko
           test -s out/nomount.ko
           file out/kernelsu.ko out/nomount.ko
@@ -196,6 +147,7 @@ jobs:
           name: kernelsu-lkm-${{ inputs.ksu_variant }}
           path: |
             kernel_platform/xiaomi/sm8450/out/kernelsu.ko
+            kernel_platform/xiaomi/sm8450/out/nomount.ko
             build-info.txt
             resolved-manifest.xml
           if-no-files-found: error
