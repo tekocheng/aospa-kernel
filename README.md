@@ -1,45 +1,54 @@
-# AOSPA Kernel Builder — Marble
+# AOSPA KernelSU LKM Builder — Marble
 
-[![Kernel Image](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-image.yml/badge.svg?branch=main)](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-image.yml)
 [![KernelSU LKM](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml/badge.svg?branch=main)](https://github.com/tekocheng/aospa-lkm-builder/actions/workflows/build-lkm.yml)
 
-GitHub Actions build environment for the **AOSPA kernel targeting Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
+A GitHub Actions builder for **KernelSU Loadable Kernel Modules (LKM)** on the AOSPA kernel for **Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
 
-This project uses **KernelSU in LKM mode**. The raw kernel image and KernelSU LKM modules are built in separate workflows. The LKM must be used with a compatible kernel built from the matching source revisions.
+This repository is intentionally LKM-only. It does not build or package a kernel Image, boot.img, AnyKernel3 ZIP, or flashable kernel installer. It does not integrate SUSFS or NoMount.
 
-## Features
+## KernelSU variants
 
-- AOSPA kernel source synchronized through Repo and the project's manifest.
-- KernelSU configured as a loadable module (`CONFIG_KSU=m`).
-- Separate manual workflows for the kernel image and LKM modules.
-- NoMount built as a companion LKM in the module workflow.
-- Clang toolchain `clang-r596125`, with GitHub Actions caching.
-- Build metadata recording source revisions, toolchain, workflow run, and relevant kernel configuration.
-- Required artifact checks to prevent missing or empty Image / LKM files from being uploaded as successful builds.
-- Runner disk cleanup, swap setup, explicit job timeouts, and limited workflow permissions.
+Run **Actions → KernelSU LKM → Run workflow**, then select one variant:
 
-> **Device scope:** The GitHub Actions workflows are configured for `marble`. The local build script contains a `cupid` target case, but these workflows do not currently provide a complete Cupid build configuration.
-
-## Workflows and artifacts
-
-Both workflows are started manually through the **Actions** tab and run on GitHub-hosted Ubuntu 22.04.
-
-| Workflow | Build mode | Artifact | Contents |
+| Workflow choice | Upstream repository | Tracked branch | Build output |
 | --- | --- | --- | --- |
-| Kernel Image | `./build.sh marble --only-kernel` | `kernel-image` | Raw `Image`, `build-info.txt`, and `resolved-manifest.xml` |
-| KernelSU LKM Module | `./build.sh marble --only-modules` | `ksu-lkm-module` | `kernelsu.ko`, `nomount.ko`, `build-info.txt`, and `resolved-manifest.xml` |
+| `KOWX712` | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | `master` | `kernelsu.ko` |
+| `BakaSU` | [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) | `main` | `kernelsu.ko` |
+| `SukiSU-Ultra` | [SukiSU-Ultra/SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra) | `main` | `kernelsu.ko` |
+| `KernelSU-Next` | [KernelSU-Next/KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) | `dev` | `kernelsu.ko` |
 
-### Run a build
+Each choice is mapped to a reviewed commit SHA in the workflow. The setup script checks out that exact revision instead of silently building whatever happens to be at the branch head. To update a variant, review the upstream changes and update its SHA in the **Resolve KernelSU variant** step.
 
-1. Open **Actions** in the repository.
-2. Select **Kernel Image**, then click **Run workflow**.
-3. Select **KernelSU LKM Module**, then click **Run workflow**.
-4. Download the artifacts from their respective completed workflow runs.
-5. Keep the two `build-info.txt` files and compare their source revisions before using the modules with the kernel.
+> These are alternative KernelSU implementations. Build and use only one variant at a time; do not mix their kernel modules or manager applications.
 
-The image workflow produces a raw kernel `Image`. It does **not** create a `boot.img`, AnyKernel3 ZIP, or flashable installer. The module workflow produces standalone `.ko` files; it does not package a KernelSU manager APK or a flashable module ZIP.
+## Run a build
 
-**Important:** Both workflows synchronize their source trees independently. If upstream branches move between runs, the kernel and LKM builds may use different source revisions. Always compare the metadata and rebuild both artifacts when the relevant kernel source or configuration differs.
+1. Open the repository's **Actions** tab.
+2. Select **KernelSU LKM**.
+3. Click **Run workflow**.
+4. Choose the desired KernelSU variant.
+5. Wait for the job to finish and download its artifact.
+
+The artifact name includes the selected variant, for example `kernelsu-lkm-KOWX712`.
+
+Each artifact contains:
+
+- `kernelsu.ko` — the selected KernelSU LKM.
+- `build-info.txt` — build type, selected variant, exact KernelSU commit, builder commit, toolchain, and source revisions.
+- `resolved-manifest.xml` — exact Repo project revisions synchronized for that run.
+
+## Build environment
+
+- Device target: `marble`.
+- ROM/kernel source: AOSPA manifest from [tekocheng/aospa-kernel](https://github.com/tekocheng/aospa-kernel).
+- Runner: GitHub-hosted Ubuntu 22.04.
+- Compiler: Clang `clang-r596125`.
+- Python: `3.12`.
+- Build mode: `./build.sh marble --only-modules`.
+- KernelSU config: `CONFIG_KSU=m`.
+- Clang is cached between runs; common setup and Repo synchronization are maintained in a local composite action.
+
+The workflow validates that `out/kernelsu.ko` exists and is non-empty before uploading. A missing module causes the job to fail.
 
 ## Source layout
 
@@ -50,7 +59,6 @@ The image workflow produces a raw kernel `Image`. It does **not** create a `boot
 │   │   └── setup-build/
 │   │       └── action.yml
 │   └── workflows/
-│       ├── build-image.yml
 │       ├── build-lkm.yml
 │       └── cleanup.yml
 ├── android_kernel_xiaomi_sm8450/
@@ -63,77 +71,34 @@ The image workflow produces a raw kernel `Image`. It does **not** create a `boot
 └── README.md
 ```
 
-The manifest assembles the kernel source, build tools, device trees, vendor modules, and supporting build projects. The local `android_kernel_xiaomi_sm8450/` directory contains the project-specific build script and `setlocalversion` override copied into the synchronized kernel tree.
+## Compatibility notes
 
-## Build script options
+- An LKM is built against the kernel source and configuration synchronized during that workflow run. It is not a universal module.
+- The workflow does not build the matching kernel Image. Use a compatible AOSPA marble kernel separately.
+- Compare `build-info.txt` and `resolved-manifest.xml` with the kernel build you intend to use. If the kernel source, configuration, symbol versions, or relevant toolchain differ, rebuild the LKM against the matching source state.
+- The four variants are alternatives, not add-ons to install together.
+- This repository currently does not build SUSFS, NoMount, Magisk modules, manager APKs, or flashable ZIPs.
 
-The script runs from the synchronized kernel source directory and requires `.build.rc` containing `SRC_ROOT=<path-to-AOSPA-source>`. The GitHub Actions workflows create this file automatically.
+## Updating variants
 
-| Command | Purpose |
-| --- | --- |
-| `./build.sh marble --only-kernel` | Build and stage the kernel Image |
-| `./build.sh marble --only-modules` | Build kernel modules and stage vendor module outputs |
-| `./build.sh marble --only-dtb` | Build DTBs / DTBO |
-| `./build.sh marble --only-config` | Generate kernel configuration only |
-| `./build.sh marble` | Full build: Image, modules, and DTBs |
-| `./build.sh marble --no-lto` | Disable Clang Full LTO |
-| `./build.sh marble --clean` | Clean output directory and the local modules checkout |
+The workflow deliberately pins each upstream revision for repeatability. To update a variant:
 
-The Actions workflows currently use only the image-only and modules-only modes.
+1. Review the upstream repository and select a known-good commit.
+2. Confirm its `kernel/setup.sh` supports selecting a commit SHA.
+3. Update the corresponding repository, branch, and SHA in **Resolve KernelSU variant**.
+4. Run the LKM workflow and inspect the complete build log and artifact metadata.
 
-## KernelSU and NoMount
-
-- KernelSU is configured as `CONFIG_KSU=m` and delivered as `kernelsu.ko`.
-- NoMount is configured as a separate module and delivered as `nomount.ko`.
-- KernelSU is pinned to commit `dbb73665d103da40c7ecbd21ba3b5ac76eb95784` in both workflows.
-- NoMount is pinned to commit `bf1847f98fed382369c43bfd652cd93774b9b8e3` in the LKM workflow.
-- The build script now stops if either required module is missing or empty.
-- The modules must match the kernel build they are intended to run with. Do not assume an LKM from an unrelated kernel build is compatible.
-
-This repository does **not** currently integrate SUSFS. It also does not configure Magisk integration or flashable ZIP packaging.
-
-## Reproducibility and build metadata
-
-Each artifact includes `build-info.txt`, which records:
-
-- Device target and build type.
-- Workflow name, run ID, attempt, and builder commit.
-- Clang toolchain directory and pinned KernelSU / NoMount revisions.
-- Git revisions for the manifest repository, kernel, build tools, device trees, and vendor modules.
-- A resolved Repo manifest (`resolved-manifest.xml`) with exact project revisions.
-- Relevant options from the generated kernel `.config`.
-
-KernelSU and NoMount are pinned so their setup scripts do not silently follow a moving branch. The AOSPA manifest is still initialized from its upstream `main` branch. Each artifact now includes `resolved-manifest.xml`, which records the exact project revisions Repo synchronized for that run.
-
-The shared composite action keeps runner preparation, Python setup, Repo sync, and Clang caching identical between the two workflows. The Clang cache is keyed by runner OS and toolchain directory. Build jobs have a six-hour timeout, use Bash strict mode in setup/build steps, and fail artifact upload when expected files are absent.
+Do not automatically follow upstream branches in production builds: a branch update can change kernel integration and break compatibility without any changes in this builder.
 
 ## Cleanup workflow
 
-**Cleanup Workflow Runs** can be started manually from Actions.
-
-- `keep`: number of newest completed workflow runs to retain (default: `3`).
-- `mode=all-finished`: delete completed runs beyond the retention window.
-- `mode=failed-only`: delete failed or non-success completed runs beyond the retention window while preserving successful runs.
-
-This workflow deletes GitHub Actions run history. It does not delete source code or releases.
-
-## Further improvement opportunities
-
-The workflows are more reproducible and validate their key outputs, but a few changes should be approached separately and tested before adoption:
-
-1. Pin the AOSPA manifest repository itself to a reviewed commit or release tag, rather than tracking `main`.
-2. Consider extracting the duplicated environment setup into a reusable workflow or composite action once the current build path is stable.
-3. Add a controlled build matrix only when another device has a verified manifest, defconfig, DTB selection, and artifact layout.
-4. Add a test build on a self-hosted runner or a dedicated validation branch before changing the compiler, LTO mode, or build flags.
+**Cleanup Workflow Runs** can be started manually from Actions. It manages completed GitHub Actions run history according to its configured retention mode. It does not delete source code or releases.
 
 ## Credits
 
 - AOSPA ShadeDark kernel and build infrastructure contributors.
-- [KernelSU](https://github.com/tiann/KernelSU) upstream maintainers.
-- [NoMount](https://github.com/maxsteeel/nomount) upstream maintainers.
-
-The local build script retains its original copyright notice.
+- The maintainers of [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU), [BakaSU](https://github.com/Baka-SU/BakaSU), [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra), and [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next).
 
 ## Disclaimer
 
-For development and testing. An incompatible kernel image or module can cause boot failure or data loss. Verify the device target, keep a known-good recovery path, and make a backup before flashing or loading modules.
+For development and testing. Loading an incompatible kernel module can cause instability or boot problems. Verify device and kernel compatibility, keep a known-good recovery path, and make backups before making system-level changes.
