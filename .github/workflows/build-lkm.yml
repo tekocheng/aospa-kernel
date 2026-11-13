@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
+      - name: Checkout builder
+        uses: actions/checkout@v7.0.1
+
       - name: Setup AOSPA build environment
         uses: ./.github/actions/setup-build
         with:
