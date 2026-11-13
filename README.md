@@ -4,7 +4,7 @@
 
 A GitHub Actions builder for **KernelSU Loadable Kernel Modules (LKM)** on the AOSPA kernel for **Xiaomi marble** (POCO F5 / Redmi Note 12 Turbo).
 
-This repository is intentionally LKM-only. It does not build or package a kernel Image, boot.img, AnyKernel3 ZIP, or flashable kernel installer. It does not integrate SUSFS or NoMount.
+This repository is intentionally LKM-only. It does not build or package a kernel Image, boot.img, AnyKernel3 ZIP, or flashable kernel installer.
 
 ## KernelSU variants
 
@@ -77,7 +77,7 @@ The workflow validates that `out/kernelsu.ko` exists and is non-empty before upl
 - The workflow does not build the matching kernel Image. Use a compatible AOSPA marble kernel separately.
 - Compare `build-info.txt` and `resolved-manifest.xml` with the kernel build you intend to use. If the kernel source, configuration, symbol versions, or relevant toolchain differ, rebuild the LKM against the matching source state.
 - The four variants are alternatives, not add-ons to install together.
-- This repository currently does not build SUSFS, NoMount, Magisk modules, manager APKs, or flashable ZIPs.
+- This repository builds only the selected KernelSU LKM artifact; it does not package manager APKs or flashable ZIPs.
 
 ## Updating variants
 
